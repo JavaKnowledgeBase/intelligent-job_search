@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { BrandLogo } from "./brand-logo";
 
 type ResumeFact = {
   label: string;
@@ -196,9 +197,8 @@ export default function Home() {
     <main className="mx-auto flex min-h-screen max-w-7xl flex-col gap-8 px-6 py-10 lg:px-10">
       <section className="grid gap-6 rounded-[2rem] border border-white/60 bg-white/75 p-8 shadow-[0_30px_80px_rgba(22,33,48,0.08)] backdrop-blur md:grid-cols-[1.3fr_0.9fr]">
         <div className="space-y-5">
-          <p className="text-sm uppercase tracking-[0.3em] text-coral">
-            Resume Co-Pilot
-          </p>
+          <BrandLogo />
+          <p className="text-sm uppercase tracking-[0.3em] text-coral">Resume Co-Pilot</p>
           <h1 className="max-w-3xl text-4xl leading-tight md:text-6xl">
             Turn a messy career story into a clean resume draft in one sitting.
           </h1>
@@ -383,6 +383,10 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      <div className="pointer-events-none fixed bottom-4 right-4 rounded-full bg-white/80 px-4 py-2 text-sm tracking-[0.18em] text-ink/70 shadow-[0_10px_30px_rgba(22,33,48,0.08)] backdrop-blur">
+        Developed by Ravi Kafley
+      </div>
     </main>
   );
 }
