@@ -60,6 +60,19 @@ class RevisionRequest(BaseModel):
     change_request: str
 
 
+class ResumeDraftUpdateRequest(BaseModel):
+    markdown: str
+
+
 class UploadExtractResponse(BaseModel):
     file_name: str
     extracted_text: str
+
+
+class AudioTranscriptionResponse(BaseModel):
+    text: str
+
+
+class RealtimeTokenResponse(BaseModel):
+    value: str
+    expires_at: int

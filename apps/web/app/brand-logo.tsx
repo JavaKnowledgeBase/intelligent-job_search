@@ -1,58 +1,103 @@
-export function BrandLogo() {
-  return (
-    <div className="flex items-center gap-4 md:gap-6">
-      <svg
-        aria-hidden="true"
-        className="h-20 w-20 md:h-28 md:w-28"
-        viewBox="0 0 180 180"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        <circle cx="130" cy="28" r="10" fill="#2A93D5" />
-        <circle cx="42" cy="150" r="14" fill="#2A9DDD" />
-        <circle cx="148" cy="130" r="14" fill="#2A9DDD" />
-        <circle cx="48" cy="42" r="15" fill="#B8B9BB" />
-        <path
-          d="M24 78C52 70 79 82 96 106"
-          stroke="#5E5E60"
-          strokeWidth="18"
-          strokeLinecap="round"
-        />
-        <path
-          d="M62 30C77 58 100 76 144 82"
-          stroke="#B8B9BB"
-          strokeWidth="18"
-          strokeLinecap="round"
-        />
-        <path
-          d="M30 62C58 86 81 108 90 138"
-          stroke="#A5A7AA"
-          strokeWidth="18"
-          strokeLinecap="round"
-        />
-        <path
-          d="M76 118C97 106 120 106 145 112"
-          stroke="#2A9DDD"
-          strokeWidth="18"
-          strokeLinecap="round"
-        />
-        <path
-          d="M90 118L125 153"
-          stroke="#2383BD"
-          strokeWidth="18"
-          strokeLinecap="round"
-        />
-      </svg>
+type BrandLogoProps = {
+  compact?: boolean;
+  iconOnly?: boolean;
+};
 
-      <div className="leading-none">
-        <p className="text-4xl font-semibold tracking-tight text-[#2A93D5] md:text-6xl">
+export function BrandLogo({ compact = false, iconOnly = false }: BrandLogoProps) {
+  if (compact) {
+    return (
+      <div
+        className={`inline-flex max-w-full items-center rounded-[1.05rem] border border-[rgba(24,36,53,0.08)] bg-white/75 backdrop-blur-sm ${
+          iconOnly ? "px-2.5 py-2" : "gap-2.5 px-2.5 py-2"
+        }`}
+      >
+        <div className="shrink-0">
+          <svg
+            aria-hidden="true"
+            className="h-10 w-10 md:h-11 md:w-11"
+            viewBox="0 0 170 170"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <circle cx="119" cy="31" r="9" fill="#B4B7BB" />
+            <circle cx="37" cy="133" r="11" fill="#2B97D5" />
+            <circle cx="132" cy="92" r="11" fill="#2B97D5" />
+            <path d="M18 86C35 72 57 72 76 83" stroke="#55575A" strokeWidth="14" strokeLinecap="round" />
+            <path d="M34 78C54 98 71 118 89 149" stroke="#A9ABAE" strokeWidth="15" strokeLinecap="round" />
+            <path d="M56 34C66 62 84 81 111 90" stroke="#8D8D8D" strokeWidth="16" strokeLinecap="round" />
+            <path d="M36 133C50 94 80 79 120 82" stroke="#2B97D5" strokeWidth="15" strokeLinecap="round" />
+            <path d="M84 104L113 133" stroke="#1F7FB7" strokeWidth="15" strokeLinecap="round" />
+          </svg>
+        </div>
+
+        {iconOnly ? null : (
+          <div className="min-w-0 leading-none">
+            <p className="text-[1.18rem] font-semibold tracking-[-0.05em] text-[#2B97D5] md:text-[1.28rem]">
+              Torilaure
+            </p>
+            <p className="mt-0.5 text-[0.92rem] tracking-[-0.04em] text-[#55575A] md:text-[1rem]">
+              E-systems
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="inline-flex max-w-full items-center gap-3 rounded-[1.6rem] border border-white/12 bg-white/10 px-4 py-3 backdrop-blur-md md:gap-4 md:px-5">
+      <div className="shrink-0">
+        <svg
+          aria-hidden="true"
+          className="h-16 w-16 md:h-[4.6rem] md:w-[4.6rem]"
+          viewBox="0 0 170 170"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle cx="119" cy="31" r="9" fill="#B4B7BB" />
+          <circle cx="37" cy="133" r="11" fill="#2B97D5" />
+          <circle cx="132" cy="92" r="11" fill="#2B97D5" />
+          <path
+            d="M18 86C35 72 57 72 76 83"
+            stroke="#55575A"
+            strokeWidth="14"
+            strokeLinecap="round"
+          />
+          <path
+            d="M34 78C54 98 71 118 89 149"
+            stroke="#A9ABAE"
+            strokeWidth="15"
+            strokeLinecap="round"
+          />
+          <path
+            d="M56 34C66 62 84 81 111 90"
+            stroke="#8D8D8D"
+            strokeWidth="16"
+            strokeLinecap="round"
+          />
+          <path
+            d="M36 133C50 94 80 79 120 82"
+            stroke="#2B97D5"
+            strokeWidth="15"
+            strokeLinecap="round"
+          />
+          <path
+            d="M84 104L113 133"
+            stroke="#1F7FB7"
+            strokeWidth="15"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+
+      <div className="min-w-0 leading-none">
+        <p className="text-[2.2rem] font-semibold tracking-[-0.05em] text-[#2B97D5] md:text-[3.2rem]">
           Torilaure
         </p>
-        <p className="mt-1 text-3xl text-[#5A5A5D] md:mt-2 md:text-5xl">
+        <p className="mt-1 text-[1.55rem] tracking-[-0.04em] text-[#55575A] md:text-[2.6rem]">
           E-systems
         </p>
       </div>
     </div>
   );
 }
-

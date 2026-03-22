@@ -7,14 +7,27 @@ from fastapi.responses import StreamingResponse
 
 from .exporters import markdown_to_docx, markdown_to_pdf
 from .models import (
+    AudioTranscriptionResponse,
     AnswersRequest,
     FactsRequest,
     IntakeRequest,
+    RealtimeTokenResponse,
+    ResumeDraft,
+    ResumeDraftUpdateRequest,
     RevisionRequest,
     SessionState,
     UploadExtractResponse,
 )
-from .services import apply_revision, build_resume, build_transcript, extract_facts, generate_questions, review_resume
+from .services import (
+    apply_revision,
+    build_resume,
+    build_transcript,
+    create_realtime_transcription_token,
+    extract_facts,
+    generate_questions,
+    review_resume,
+    transcribe_audio,
+)
 from .store import MemorySessionStore
 from .uploads import extract_text_from_upload
 
@@ -86,6 +99,37 @@ async def extract_upload(file: UploadFile = File(...)) -> UploadExtractResponse:
     return UploadExtractResponse(file_name=file.filename, extracted_text=extracted_text)
 
 
+@app.post("/audio/transcribe", response_model=AudioTranscriptionResponse)
+async def transcribe_audio_upload(file: UploadFile = File(...)) -> AudioTranscriptionResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="A filename is required")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="The uploaded audio is empty")
+
+    transcript = transcribe_audio(file.filename, content)
+    if not transcript:
+        raise HTTPException(
+            status_code=503,
+            detail="Audio transcription is unavailable right now. Check your OpenAI configuration and try again.",
+        )
+
+    return AudioTranscriptionResponse(text=transcript)
+
+
+@app.post("/audio/realtime-token", response_model=RealtimeTokenResponse)
+def create_audio_realtime_token() -> RealtimeTokenResponse:
+    token = create_realtime_transcription_token()
+    if token is None:
+      raise HTTPException(
+          status_code=503,
+          detail="Realtime transcription is unavailable right now. Check your OpenAI configuration and try again.",
+      )
+
+    return RealtimeTokenResponse(value=str(token["value"]), expires_at=int(token["expires_at"]))
+
+
 @app.get("/sessions/{session_id}", response_model=SessionState)
 def get_session(session_id: str) -> SessionState:
     return require_session(session_id)
@@ -138,6 +182,16 @@ def resume(session_id: str) -> SessionState:
     session = require_session(session_id)
     session.resume_draft = build_resume(session)
     session.transcript = build_transcript(session)
+    session.status = "resume_ready"
+    return store.save(session)
+
+
+@app.post("/sessions/{session_id}/resume-draft", response_model=SessionState)
+def update_resume_draft(session_id: str, payload: ResumeDraftUpdateRequest) -> SessionState:
+    session = require_session(session_id)
+    session.resume_draft = ResumeDraft(markdown=payload.markdown.strip() or "# Resume Draft")
+    session.review_result = None
+    session.final_resume = None
     session.status = "resume_ready"
     return store.save(session)
 

@@ -30,6 +30,9 @@ type SessionState = {
 type PersistedState = {
   sessionId: string | null;
   brainDump: string;
+  voiceTranscript: string;
+  uploadedFileName: string;
+  uploadedFileText: string;
   answers: Record<string, string>;
   changeRequest: string;
   exportTemplate: ExportTemplate;
@@ -37,38 +40,16 @@ type PersistedState = {
 
 type CreateSessionOptions = {
   brainDump?: string;
+  voiceTranscript?: string;
+  uploadedFileName?: string;
+  uploadedFileText?: string;
   answers?: Record<string, string>;
   changeRequest?: string;
   exportTemplate?: ExportTemplate;
 };
 
 type ExportTemplate = "professional" | "modern" | "compact";
-
-type SpeechRecognitionEventLike = Event & {
-  results: SpeechRecognitionResultList;
-};
-
-type SpeechRecognitionErrorEventLike = Event & {
-  error: string;
-};
-
-interface SpeechRecognitionLike extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onend: (() => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition?: new () => SpeechRecognitionLike;
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-  }
-}
+type FlowStep = "input" | "facts" | "questions" | "draft" | "export";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001";
 const STORAGE_KEY = "resume-copilot-session";
@@ -79,6 +60,9 @@ const defaultBrainDump =
 export default function Home() {
   const [session, setSession] = useState<SessionState | null>(null);
   const [brainDump, setBrainDump] = useState(defaultBrainDump);
+  const [lastVoiceTranscript, setLastVoiceTranscript] = useState("");
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const [uploadedFileText, setUploadedFileText] = useState("");
   const [editableFacts, setEditableFacts] = useState<ResumeFact[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [changeRequest, setChangeRequest] = useState("");
@@ -91,8 +75,15 @@ export default function Home() {
   const [isListening, setIsListening] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [activeStep, setActiveStep] = useState<FlowStep>("input");
+  const [editableResumeMarkdown, setEditableResumeMarkdown] = useState("");
+  const [savingResume, setSavingResume] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const partialTranscriptRef = useRef<Map<string, string>>(new Map());
+  const completedTranscriptRef = useRef<string[]>([]);
   const resumeMarkdown =
     session?.final_resume?.markdown ??
     session?.review_result?.markdown ??
@@ -101,17 +92,21 @@ export default function Home() {
   const hasUnsavedFactChanges =
     JSON.stringify(editableFacts) !== JSON.stringify(session?.facts ?? []);
   const canExportResume = Boolean(resumeMarkdown) && !hasUnsavedFactChanges;
+  const hasUnsavedResumeChanges = editableResumeMarkdown.trim() !== resumeMarkdown.trim();
 
   useEffect(() => {
-    const SpeechRecognitionCtor =
-      typeof window === "undefined"
-        ? undefined
-        : window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    setSpeechSupported(Boolean(SpeechRecognitionCtor));
+    setSpeechSupported(
+      typeof window !== "undefined" &&
+        "RTCPeerConnection" in window &&
+        typeof navigator !== "undefined" &&
+        Boolean(navigator.mediaDevices?.getUserMedia),
+    );
     void restoreSession();
 
     return () => {
-      recognitionRef.current?.stop();
+      dataChannelRef.current?.close();
+      peerConnectionRef.current?.close();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
@@ -123,17 +118,51 @@ export default function Home() {
     const payload: PersistedState = {
       sessionId: session?.session_id ?? null,
       brainDump,
+      voiceTranscript: lastVoiceTranscript,
+      uploadedFileName,
+      uploadedFileText,
       answers,
       changeRequest,
       exportTemplate,
     };
 
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [answers, brainDump, changeRequest, exportTemplate, session]);
+  }, [answers, brainDump, changeRequest, exportTemplate, session, uploadedFileName, uploadedFileText, lastVoiceTranscript]);
 
   useEffect(() => {
     setEditableFacts(session?.facts ?? []);
   }, [session?.facts]);
+
+  useEffect(() => {
+    setEditableResumeMarkdown(resumeMarkdown);
+  }, [resumeMarkdown]);
+
+  useEffect(() => {
+    if (session?.final_resume) {
+      setActiveStep("export");
+      return;
+    }
+    if (session?.review_result || session?.resume_draft) {
+      setActiveStep("draft");
+      return;
+    }
+    if (session?.questions.length) {
+      setActiveStep(hasUnsavedFactChanges ? "facts" : "questions");
+      return;
+    }
+    if (session?.facts.length) {
+      setActiveStep("facts");
+      return;
+    }
+    setActiveStep("input");
+  }, [
+    hasUnsavedFactChanges,
+    session?.facts,
+    session?.final_resume,
+    session?.questions,
+    session?.resume_draft,
+    session?.review_result,
+  ]);
 
   function downloadTextFile(filename: string, contents: string) {
     if (!contents.trim()) {
@@ -159,6 +188,7 @@ export default function Home() {
     }
 
     try {
+      await saveEditedResumeDraft();
       setError("");
       const response = await fetch(
         `${API_BASE}/sessions/${session.session_id}/export/${format}?template=${exportTemplate}`,
@@ -227,6 +257,9 @@ export default function Home() {
 
   async function createFreshSession(options?: CreateSessionOptions) {
     const nextBrainDump = options?.brainDump ?? defaultBrainDump;
+    const nextVoiceTranscript = options?.voiceTranscript ?? "";
+    const nextUploadedFileName = options?.uploadedFileName ?? "";
+    const nextUploadedFileText = options?.uploadedFileText ?? "";
     const nextAnswers = options?.answers ?? {};
     const nextChangeRequest = options?.changeRequest ?? "";
     const nextExportTemplate = options?.exportTemplate ?? "professional";
@@ -246,6 +279,9 @@ export default function Home() {
       setChangeRequest(nextChangeRequest);
       setExportTemplate(nextExportTemplate);
       setBrainDump(nextBrainDump);
+      setLastVoiceTranscript(nextVoiceTranscript);
+      setUploadedFileName(nextUploadedFileName);
+      setUploadedFileText(nextUploadedFileText);
       setSessionReady(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create session.");
@@ -266,6 +302,9 @@ export default function Home() {
     }
 
     setBrainDump(persisted.brainDump || defaultBrainDump);
+    setLastVoiceTranscript(persisted.voiceTranscript || "");
+    setUploadedFileName(persisted.uploadedFileName || "");
+    setUploadedFileText(persisted.uploadedFileText || "");
     setAnswers(persisted.answers || {});
     setChangeRequest(persisted.changeRequest || "");
     setExportTemplate(persisted.exportTemplate || "professional");
@@ -275,6 +314,9 @@ export default function Home() {
       if (response.status === 404) {
         await createFreshSession({
           brainDump: persisted.brainDump || defaultBrainDump,
+          voiceTranscript: persisted.voiceTranscript || "",
+          uploadedFileName: persisted.uploadedFileName || "",
+          uploadedFileText: persisted.uploadedFileText || "",
           answers: persisted.answers || {},
           changeRequest: persisted.changeRequest || "",
           exportTemplate: persisted.exportTemplate || "professional",
@@ -293,6 +335,31 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function getCombinedBrainDump() {
+    const typedText = brainDump.trim();
+    const voiceText = lastVoiceTranscript.trim();
+    const uploadedText = uploadedFileText.trim();
+    const parts: string[] = [];
+
+    if (typedText && typedText !== defaultBrainDump.trim()) {
+      parts.push(typedText);
+    }
+
+    if (voiceText) {
+      parts.push(voiceText);
+    }
+
+    if (uploadedText) {
+      parts.push(uploadedText);
+    }
+
+    if (parts.length) {
+      return parts.join("\n\n");
+    }
+
+    return typedText || defaultBrainDump;
   }
 
   async function extractFacts() {
@@ -319,7 +386,7 @@ export default function Home() {
       const intakeResponse = await fetch(`${API_BASE}/sessions/${activeSession.session_id}/intake`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brain_dump: brainDump }),
+        body: JSON.stringify({ brain_dump: getCombinedBrainDump() }),
       });
 
       if (!intakeResponse.ok) {
@@ -343,6 +410,92 @@ export default function Home() {
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function processAndBuildResumeFromWelcome() {
+    let activeSession = session;
+    if (!activeSession) {
+      try {
+        const response = await fetch(`${API_BASE}/sessions`, { method: "POST" });
+        if (!response.ok) {
+          throw new Error("Failed to create session.");
+        }
+        activeSession = (await response.json()) as SessionState;
+        setSession(activeSession);
+        setSessionReady(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to create session.");
+        return;
+      }
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const intakeResponse = await fetch(`${API_BASE}/sessions/${activeSession.session_id}/intake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brain_dump: getCombinedBrainDump() }),
+      });
+
+      if (!intakeResponse.ok) {
+        throw new Error("Failed to process your background.");
+      }
+
+      const intakeData = (await intakeResponse.json()) as SessionState;
+      setSession(intakeData);
+
+      const resumeResponse = await fetch(`${API_BASE}/sessions/${activeSession.session_id}/resume`, {
+        method: "POST",
+      });
+
+      if (!resumeResponse.ok) {
+        throw new Error("Failed to build resume draft.");
+      }
+
+      const resumeData = (await resumeResponse.json()) as SessionState;
+      setSession(resumeData);
+      setShowWelcome(false);
+      setActiveStep("draft");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process and build resume.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveEditedResumeDraft() {
+    if (!session?.session_id) {
+      return;
+    }
+
+    const nextMarkdown = editableResumeMarkdown.trim();
+    if (!nextMarkdown || !hasUnsavedResumeChanges) {
+      return;
+    }
+
+    setSavingResume(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE}/sessions/${session.session_id}/resume-draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markdown: nextMarkdown }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save resume changes.");
+      }
+
+      const data = (await response.json()) as SessionState;
+      setSession(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save resume changes.");
+    } finally {
+      setSavingResume(false);
     }
   }
 
@@ -557,7 +710,8 @@ export default function Home() {
       }
 
       const payload = (await response.json()) as { extracted_text: string };
-      setBrainDump(payload.extracted_text);
+      setUploadedFileName(file.name);
+      setUploadedFileText(payload.extracted_text);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to read that file.");
     } finally {
@@ -570,57 +724,179 @@ export default function Home() {
     fileInputRef.current?.click();
   }
 
-  function startVoiceCapture() {
-    const SpeechRecognitionCtor =
-      typeof window === "undefined"
-        ? undefined
-        : window.SpeechRecognition ?? window.webkitSpeechRecognition;
+  function buildLiveTranscript() {
+    const partials = Array.from(partialTranscriptRef.current.values()).filter(Boolean);
+    return [...completedTranscriptRef.current, ...partials].join(" ").trim();
+  }
 
-    if (!SpeechRecognitionCtor) {
-      setError("Microphone capture is not supported in this browser.");
+  function syncLiveTranscript() {
+    const transcript = buildLiveTranscript();
+    setLastVoiceTranscript(transcript);
+    return transcript;
+  }
+
+  async function startVoiceCapture() {
+    if (!speechSupported || !navigator.mediaDevices?.getUserMedia) {
+      setError("Live microphone transcription is not supported in this browser.");
       return;
     }
 
-    recognitionRef.current?.stop();
+    try {
+      setError("");
+      setVoiceStatus("Starting live transcription...");
+      completedTranscriptRef.current = lastVoiceTranscript.trim()
+        ? [lastVoiceTranscript.trim()]
+        : [];
+      partialTranscriptRef.current.clear();
+      dataChannelRef.current?.close();
+      peerConnectionRef.current?.close();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
 
-    const recognition = new SpeechRecognitionCtor();
-    recognition.lang = "en-US";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? "")
-        .join(" ")
-        .trim();
-
-      if (transcript) {
-        setBrainDump(transcript);
+      const tokenResponse = await fetch(`${API_BASE}/audio/realtime-token`, { method: "POST" });
+      if (!tokenResponse.ok) {
+        const payload = (await tokenResponse.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Realtime transcription could not be started.");
       }
-    };
 
-    recognition.onerror = (event) => {
+      const tokenPayload = (await tokenResponse.json()) as { value: string };
+      const ephemeralKey = tokenPayload.value;
+      if (!ephemeralKey) {
+        throw new Error("Realtime transcription token was missing.");
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const peerConnection = new RTCPeerConnection();
+      peerConnectionRef.current = peerConnection;
+
+      stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
+
+      const dataChannel = peerConnection.createDataChannel("oai-events");
+      dataChannelRef.current = dataChannel;
+      dataChannel.onopen = () => {
+        setVoiceStatus("Live transcription is running...");
+        dataChannel.send(
+          JSON.stringify({
+            type: "session.update",
+            session: {
+              audio: {
+                input: {
+                  format: {
+                    type: "audio/pcm",
+                    rate: 24000,
+                  },
+                  transcription: {
+                    model: "gpt-4o-mini-transcribe",
+                    language: "en",
+                  },
+                  turn_detection: {
+                    type: "server_vad",
+                    silence_duration_ms: 500,
+                  },
+                },
+              },
+            },
+          }),
+        );
+      };
+      dataChannel.onerror = () => {
+        setError("The live transcription channel ran into a connection problem.");
+      };
+      dataChannel.onmessage = (event) => {
+        const payload = JSON.parse(event.data) as {
+          type?: string;
+          item_id?: string;
+          delta?: string;
+          transcript?: string;
+        };
+        const itemId = payload.item_id ?? "live";
+
+        if (payload.type === "conversation.item.input_audio_transcription.delta" && payload.delta) {
+          partialTranscriptRef.current.set(
+            itemId,
+            `${partialTranscriptRef.current.get(itemId) ?? ""}${payload.delta}`,
+          );
+          syncLiveTranscript();
+          return;
+        }
+
+        if (
+          payload.type === "conversation.item.input_audio_transcription.completed" &&
+          payload.transcript
+        ) {
+          const transcript = payload.transcript.trim();
+          if (transcript) {
+            completedTranscriptRef.current.push(transcript);
+          }
+          partialTranscriptRef.current.delete(itemId);
+          syncLiveTranscript();
+        }
+      };
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ephemeralKey}`,
+          "Content-Type": "application/sdp",
+        },
+        body: offer.sdp,
+      });
+
+      if (!sdpResponse.ok) {
+        throw new Error("OpenAI realtime connection could not be established.");
+      }
+
+      const answerSdp = await sdpResponse.text();
+      await peerConnection.setRemoteDescription({
+        type: "answer",
+        sdp: answerSdp,
+      });
+
+      setIsListening(true);
+    } catch (err) {
+      peerConnectionRef.current?.close();
+      peerConnectionRef.current = null;
+      dataChannelRef.current?.close();
+      dataChannelRef.current = null;
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+      setError(err instanceof Error ? err.message : "Unable to start live transcription.");
       setVoiceStatus("");
       setIsListening(false);
-      setError(`Microphone error: ${event.error}`);
-    };
-
-    recognition.onend = () => {
-      setVoiceStatus("");
-      setIsListening(false);
-    };
-
-    recognitionRef.current = recognition;
-    setError("");
-    setIsListening(true);
-    setVoiceStatus("Listening... speak naturally and we will fill the text box.");
-    recognition.start();
+    }
   }
 
   function stopVoiceCapture() {
-    recognitionRef.current?.stop();
+    dataChannelRef.current?.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+    const transcript = syncLiveTranscript();
+    dataChannelRef.current?.close();
+    dataChannelRef.current = null;
+    peerConnectionRef.current?.close();
+    peerConnectionRef.current = null;
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
     setIsListening(false);
+    setVoiceStatus(transcript ? "Live transcript is ready to review or edit." : "");
+  }
+
+  function clearVoiceTranscript() {
+    partialTranscriptRef.current.clear();
+    completedTranscriptRef.current = [];
+    setLastVoiceTranscript("");
     setVoiceStatus("");
+  }
+
+  function clearTypedInput() {
+    setBrainDump("");
+  }
+
+  function handleVoiceTranscriptChange(value: string) {
+    setLastVoiceTranscript(value);
+    completedTranscriptRef.current = value.trim() ? [value.trim()] : [];
+    partialTranscriptRef.current.clear();
   }
 
   function formatExpiry(expiresAt?: string) {
@@ -658,6 +934,52 @@ export default function Home() {
     return "Step 1 of 4";
   }
 
+  const flowSteps: Array<{
+    id: FlowStep;
+    label: string;
+    title: string;
+    description: string;
+    enabled: boolean;
+  }> = [
+    {
+      id: "input",
+      label: "01",
+      title: "Career Input",
+      description: "Tell your story by typing, upload, or voice.",
+      enabled: true,
+    },
+    {
+      id: "facts",
+      label: "02",
+      title: "Fact Review",
+      description: "Edit the extracted facts before moving forward.",
+      enabled: Boolean(session?.facts.length),
+    },
+    {
+      id: "questions",
+      label: "03",
+      title: "Follow-Up Questions",
+      description: "Add measurable detail and target-role context.",
+      enabled: Boolean(session?.questions.length),
+    },
+    {
+      id: "draft",
+      label: "04",
+      title: "Draft And Improve",
+      description: "Review the draft, transcript, and final changes.",
+      enabled: Boolean(session?.resume_draft || session?.review_result || session?.final_resume),
+    },
+    {
+      id: "export",
+      label: "05",
+      title: "Export",
+      description: "Choose a template and download the final result.",
+      enabled: canExportResume,
+    },
+  ];
+
+  const showDraftWorkspace = activeStep === "draft" && !showWelcome && Boolean(resumeMarkdown);
+
   return (
     <>
       <input
@@ -670,8 +992,15 @@ export default function Home() {
       <WelcomeOverlay
         open={showWelcome}
         brainDump={brainDump}
+        uploadedFileName={uploadedFileName}
+        lastVoiceTranscript={lastVoiceTranscript}
+        loading={loading}
         onBrainDumpChange={setBrainDump}
         onUseTypedIntro={() => setSessionReady(true)}
+        onProcessBuildResume={processAndBuildResumeFromWelcome}
+        onVoiceTranscriptChange={handleVoiceTranscriptChange}
+        onClearBrainDump={clearTypedInput}
+        onClearVoiceTranscript={clearVoiceTranscript}
         onUploadClick={beginFileSelection}
         onVoiceStart={startVoiceCapture}
         onVoiceStop={stopVoiceCapture}
@@ -681,318 +1010,564 @@ export default function Home() {
         uploadingFile={uploadingFile}
         onClose={() => setShowWelcome(false)}
       />
-      <main className="mx-auto flex min-h-screen max-w-7xl flex-col gap-8 px-6 py-10 lg:px-10">
-        <section className="grid gap-6 rounded-[2rem] border border-white/60 bg-white/75 p-8 shadow-[0_30px_80px_rgba(22,33,48,0.08)] backdrop-blur md:grid-cols-[1.3fr_0.9fr]">
-        <div className="space-y-5">
-          <BrandLogo />
-          <p className="text-sm uppercase tracking-[0.3em] text-coral">Resume Co-Pilot</p>
-          <h1 className="max-w-3xl text-4xl leading-tight md:text-6xl">
-            Turn a messy career story into a clean resume draft in one sitting.
-          </h1>
-          <p className="max-w-2xl text-lg leading-8 text-ink/75">
-            We are starting with a text-first MVP so we can perfect the core
-            interview flow before adding voice, uploads, and PDF export.
-          </p>
-          <div className="max-w-2xl rounded-[1.5rem] border border-ink/10 bg-white/70 px-5 py-4 text-base leading-7 text-ink/80">
-            Start here: click <span className="font-semibold text-coral">Start Building And Type</span> on the welcome screen, then use the large text box below.
-            Upload and voice intake are being added into the same opening flow.
-          </div>
-        </div>
-
-        <div className="rounded-[1.5rem] bg-ink p-6 text-sand">
-          <p className="text-sm uppercase tracking-[0.25em] text-sand/70">
-            Session Promise
-          </p>
-          <p className="mt-4 text-2xl leading-9">
-            No account required. No persistent profile needed for the first
-            version. The session expires automatically.
-          </p>
-          <p className="mt-4 text-sm leading-6 text-sand/75">
-            {formatExpiry(session?.expires_at)}
-          </p>
-        </div>
-        </section>
-
-        <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-[2rem] border border-ink/10 bg-white/80 p-6 shadow-[0_20px_60px_rgba(22,33,48,0.06)]">
-          <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-2xl">Career Brain Dump</h2>
-            <span className="rounded-full bg-tide px-3 py-1 text-sm text-pine">
-              {getStageLabel()}
-            </span>
-          </div>
-          <p className="mb-4 rounded-[1rem] bg-tide px-4 py-3 text-sm leading-6 text-pine">
-            {loading && !sessionReady
-              ? "Preparing your session..."
-              : "Paste your background, job history, skills, and goals here. Then click Extract Facts to begin."}
-          </p>
-          <textarea
-            className="min-h-[320px] w-full rounded-[1.5rem] border border-ink/10 bg-sand/70 p-5 text-lg leading-8 text-ink outline-none transition focus:border-coral"
-            value={brainDump}
-            onChange={(event) => setBrainDump(event.target.value)}
-          />
-          <div className="mt-5 flex gap-3">
-            <button
-              type="button"
-              className="rounded-full bg-coral px-5 py-3 text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={loading}
-              onClick={extractFacts}
-            >
-              {loading ? "Working..." : "Extract Facts"}
-            </button>
-            <button
-              type="button"
-              className="rounded-full border border-ink/15 px-5 py-3 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={loading}
-              onClick={() => void createFreshSession()}
-            >
-              Start New Session
-            </button>
-            <button
-              type="button"
-              className="rounded-full border border-ink/15 px-5 py-3 text-ink"
-              onClick={() => setShowWelcome(true)}
-            >
-              Show Welcome
-            </button>
-          </div>
-          {error ? <p className="mt-4 text-sm text-coral">{error}</p> : null}
-          {session?.facts.length ? (
-            <div className="mt-6 rounded-[1.5rem] bg-tide p-5">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-lg text-pine">Extracted Facts</h3>
-                  <p className="mt-1 text-sm leading-6 text-pine/75">
-                    Edit these before building if the draft needs clearer facts.
-                  </p>
-                  {hasUnsavedFactChanges ? (
-                    <p className="mt-2 text-sm font-semibold text-coral">
-                      You have unsaved fact edits.
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    className="rounded-full border border-ink/15 px-4 py-2 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={loading || !hasUnsavedFactChanges}
-                    onClick={saveFactEdits}
-                  >
-                    Save Facts
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-full border border-ink/15 px-4 py-2 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={loading}
-                    onClick={refreshQuestionsFromFacts}
-                  >
-                    Refresh Questions
-                  </button>
-                </div>
+      {showDraftWorkspace ? (
+        <main className="mx-auto flex h-screen w-full max-w-[1600px] flex-col p-4">
+          <section className="grid h-full min-h-0 gap-4 xl:grid-cols-[40%_60%]">
+            <aside className="executive-panel flex min-h-0 flex-col overflow-hidden p-6">
+              <div className="shrink-0">
+                <BrandLogo />
+                <h1 className="executive-display mt-5 text-3xl leading-[0.95] text-ink md:text-[3.2rem]">
+                  Resume Co-Pilot
+                </h1>
+                <p className="mt-3 max-w-xl text-base leading-7 text-[var(--executive-mute)]">
+                  You can edit the resume if more changes required and download.
+                </p>
               </div>
-              <div className="mt-3 grid gap-3">
-                {editableFacts.map((fact, index) => (
-                  <div key={`${index}-${fact.label}`} className="rounded-2xl bg-white/75 px-4 py-4">
-                    <div className="grid gap-3 md:grid-cols-[0.35fr_1fr_auto]">
-                      <input
-                        className="rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm uppercase tracking-[0.14em] text-pine/80 outline-none focus:border-coral"
-                        value={fact.label}
-                        onChange={(event) => updateFact(index, "label", event.target.value)}
-                        placeholder="Label"
-                      />
-                      <textarea
-                        className="min-h-24 rounded-2xl border border-ink/10 bg-white px-4 py-3 leading-7 text-ink outline-none focus:border-coral"
-                        value={fact.value}
-                        onChange={(event) => updateFact(index, "value", event.target.value)}
-                        placeholder="Fact value"
-                      />
-                      <button
-                        type="button"
-                        className="rounded-full border border-ink/15 px-4 py-3 text-sm text-ink"
-                        onClick={() => removeFact(index)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4">
+
+              <div className="mt-6 grid shrink-0 gap-3 md:grid-cols-3">
                 <button
                   type="button"
-                  className="rounded-full border border-ink/15 px-4 py-2 text-sm text-ink"
-                  onClick={addFact}
+                  className="executive-primary-button w-full"
+                  disabled={!canExportResume || loading || savingResume}
+                  onClick={() => void downloadResumeFile("pdf")}
                 >
-                  Add Fact
+                  Download PDF
                 </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-          <div className="space-y-6">
-          <div className="rounded-[2rem] border border-ink/10 bg-white/80 p-6 shadow-[0_20px_60px_rgba(22,33,48,0.06)]">
-            <h2 className="text-2xl">Follow-Up Questions</h2>
-            {session?.questions.length ? (
-              <form className="mt-4 space-y-4" onSubmit={buildResume}>
-                {session.questions.map((question) => (
-                  <label key={question.id} className="block rounded-[1.25rem] bg-tide p-4">
-                    <span className="block leading-7 text-pine">{question.prompt}</span>
-                    <textarea
-                      className="mt-3 min-h-28 w-full rounded-2xl border border-ink/10 bg-white/85 p-4 leading-7 text-ink outline-none focus:border-coral"
-                      value={answers[question.id] ?? ""}
-                      onChange={(event) =>
-                        setAnswers((current) => ({
-                          ...current,
-                          [question.id]: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                ))}
                 <button
-                  type="submit"
-                  className="rounded-full bg-pine px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={loading || hasUnsavedFactChanges}
+                  type="button"
+                  className="executive-secondary-button w-full"
+                  disabled={!canExportResume || loading || savingResume}
+                  onClick={() => void downloadResumeFile("docx")}
                 >
-                  {hasUnsavedFactChanges ? "Save Facts Or Refresh Questions First" : "Build Resume Draft"}
+                  Download DOCX
                 </button>
-              </form>
-            ) : (
-              <p className="mt-4 rounded-[1.25rem] bg-tide px-4 py-4 leading-7 text-pine">
-                Extract the intake first and we will generate targeted follow-up questions here.
-              </p>
-            )}
-          </div>
-
-          <div className="rounded-[2rem] border border-ink/10 bg-white/80 p-6 shadow-[0_20px_60px_rgba(22,33,48,0.06)]">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-2xl">AI Review</h2>
-              <div className="flex flex-wrap gap-3">
                 <button
-                  className="rounded-full border border-ink/15 px-5 py-3 text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                  type="button"
+                  className="executive-secondary-button w-full"
                   disabled={!session?.transcript}
                   onClick={() => downloadTextFile("session-transcript.md", session?.transcript ?? "")}
                 >
                   Download Transcript
                 </button>
-                <button
-                  className="rounded-full bg-coral px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={loading || !session?.resume_draft || hasUnsavedFactChanges}
-                  onClick={reviewResume}
-                >
-                  Review Transcript + Draft
-                </button>
               </div>
+
+              <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-[1.4rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="executive-kicker">Transcript</p>
+                  <span className="text-xs uppercase tracking-[0.2em] text-[var(--executive-mute)]">
+                    Source Notes
+                  </span>
+                </div>
+                <div className="mt-3 h-[calc(100%-2rem)] overflow-auto rounded-[1.1rem] border border-[var(--executive-line)] bg-white/80 p-4 text-sm leading-7 text-[var(--executive-mute)]">
+                  {session?.transcript ? (
+                    <pre className="whitespace-pre-wrap font-inherit text-inherit">
+                      {session.transcript}
+                    </pre>
+                  ) : (
+                    <p>The transcript will appear here after the resume is built.</p>
+                  )}
+                </div>
+              </div>
+            </aside>
+
+            <section className="executive-panel flex min-h-0 flex-col overflow-hidden p-5 md:p-6">
+              <div className="flex shrink-0 items-start justify-between gap-4">
+                <div>
+                  <p className="executive-kicker">Editable Resume</p>
+                  <h2 className="mt-2 text-2xl md:text-3xl">Review And Refine</h2>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    className="executive-secondary-button"
+                    onClick={() => setShowWelcome(true)}
+                  >
+                    Back To Intake
+                  </button>
+                  <button
+                    type="button"
+                    className="executive-primary-button"
+                    disabled={!hasUnsavedResumeChanges || savingResume}
+                    onClick={() => void saveEditedResumeDraft()}
+                  >
+                    {savingResume ? "Saving..." : "Save Resume"}
+                  </button>
+                </div>
+              </div>
+
+              {error ? <p className="mt-4 text-sm text-coral">{error}</p> : null}
+
+              <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-[1.6rem] border border-[rgba(24,36,53,0.08)] bg-[linear-gradient(180deg,#fefefe_0%,#f8fafc_100%)] p-4 md:p-6">
+                <textarea
+                  className="h-full w-full resize-none overflow-auto rounded-[1.25rem] border border-[rgba(24,36,53,0.08)] bg-white px-6 py-6 font-['Georgia'] text-[15px] leading-7 text-ink outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
+                  value={editableResumeMarkdown}
+                  onChange={(event) => setEditableResumeMarkdown(event.target.value)}
+                  onBlur={() => void saveEditedResumeDraft()}
+                />
+              </div>
+            </section>
+          </section>
+        </main>
+      ) : (
+      <main className="mx-auto flex min-h-screen max-w-[1450px] flex-col gap-8 px-4 py-6 pb-20 md:px-8 xl:px-10">
+        <section className="executive-hero relative overflow-hidden rounded-[2.2rem] border border-white/10 p-8 shadow-[0_30px_110px_rgba(11,19,34,0.24)] md:p-10">
+        <div className="executive-orbit executive-orbit-a" />
+        <div className="executive-orbit executive-orbit-b" />
+        <div className="relative grid gap-8 md:grid-cols-[1.3fr_0.9fr]">
+        <div className="min-w-0 space-y-6">
+          <BrandLogo />
+          <p className="text-sm uppercase tracking-[0.35em] text-[var(--executive-bg-strong)]">Resume Co-Pilot</p>
+          <h1 className="executive-display max-w-4xl text-4xl leading-[1.02] text-white md:text-6xl">
+            Transform a rough career story into a boardroom-ready resume.
+          </h1>
+          <p className="max-w-3xl text-lg leading-8 text-white/76">
+            A premium drafting workspace for capturing experience, refining facts,
+            answering strategic follow-up questions, and exporting a polished final result.
+          </p>
+          <div className="max-w-3xl rounded-[1.6rem] border border-white/10 bg-white/8 px-5 py-4 text-base leading-7 text-white/74 backdrop-blur-sm">
+            Start with the concierge welcome, bring in your story by text, upload, or voice,
+            then move through extraction, review, refinement, and export in a single guided flow.
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="executive-metric">
+              <strong>Capture</strong>
+              <span>Type, upload, or dictate your experience in the format that feels easiest.</span>
             </div>
+            <div className="executive-metric">
+              <strong>Refine</strong>
+              <span>Review extracted facts and answer targeted questions before drafting.</span>
+            </div>
+            <div className="executive-metric">
+              <strong>Deliver</strong>
+              <span>Export a professional final resume in Markdown, JSON, DOCX, or PDF.</span>
+            </div>
+          </div>
+        </div>
 
-            {session?.transcript ? (
-              <pre className="mt-4 max-h-56 overflow-auto whitespace-pre-wrap rounded-[1.25rem] bg-sand/80 p-4 text-sm leading-7 text-ink">
-                {session.transcript}
-              </pre>
-            ) : (
-              <p className="mt-4 rounded-[1.25rem] bg-tide px-4 py-4 leading-7 text-pine">
-                The transcript will appear here after the first draft is generated.
-              </p>
-            )}
+        <div className="executive-sidebar min-w-0 rounded-[1.75rem] border border-white/10 bg-white/6 p-6 text-white backdrop-blur-sm">
+          <p className="text-sm uppercase tracking-[0.25em] text-[var(--executive-bg-strong)]">
+            Executive Session
+          </p>
+          <p className="mt-4 text-2xl leading-9">
+            Private by default. Focused on clarity, speed, and professional output.
+          </p>
+          <p className="mt-4 text-sm leading-7 text-white/72">
+            {formatExpiry(session?.expires_at)}
+          </p>
+          <div className="mt-6 grid gap-3">
+            <div className="rounded-[1.2rem] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-7 text-white/72">
+              {hasUnsavedFactChanges
+                ? "Fact edits need to be synced before final drafting and export."
+                : "The workspace is aligned and ready for the next step."}
+            </div>
+            <div className="rounded-[1.2rem] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-7 text-white/72">
+              No account is required, and the session is designed to remain temporary.
+            </div>
+            <div className="rounded-[1.2rem] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-7 text-white/72">
+              Workflow: intake, facts, questions, review, then export.
+            </div>
+          </div>
+        </div>
+        </div>
+        </section>
 
-            {session?.review_result ? (
-              <div className="mt-4 space-y-4">
-                <div className="rounded-[1.25rem] bg-tide p-4">
-                  <h3 className="text-lg text-pine">Review Notes</h3>
-                  <div className="mt-3 space-y-2">
-                    {session.review_result.notes.map((note) => (
-                      <p key={note} className="rounded-2xl bg-white/80 px-4 py-3 leading-7">
-                        {note}
+        <section className="grid gap-6 lg:grid-cols-[300px_1fr]">
+          <aside className="executive-panel h-fit p-4 md:sticky md:top-6">
+            <p className="executive-kicker">Workflow</p>
+            <h2 className="mt-2 text-2xl">Progress</h2>
+            <div className="mt-5 space-y-3">
+              {flowSteps.map((step) => {
+                const isActive = activeStep === step.id;
+                return (
+                  <button
+                    key={step.id}
+                    type="button"
+                    className={`w-full rounded-[1.35rem] border px-4 py-4 text-left transition ${
+                      isActive
+                        ? "border-[var(--executive-accent)] bg-[var(--executive-accent-ghost)] shadow-[0_16px_32px_rgba(159,122,57,0.08)]"
+                        : "border-[var(--executive-line)] bg-white"
+                    } ${step.enabled ? "opacity-100" : "opacity-55"}`}
+                    disabled={!step.enabled}
+                    onClick={() => setActiveStep(step.id)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--executive-soft)] text-sm font-semibold text-pine">
+                        {step.label}
+                      </span>
+                      <div>
+                        <p className="text-base font-semibold text-ink">{step.title}</p>
+                        <p className="mt-1 text-sm leading-6 text-[var(--executive-mute)]">
+                          {step.description}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-5 rounded-[1.35rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] px-4 py-4 text-sm leading-7 text-[var(--executive-mute)]">
+              Use the sidebar to revisit finished steps. Locked steps open automatically once the required work is complete.
+            </div>
+          </aside>
+
+          <div className="min-w-0 space-y-6">
+            {activeStep === "input" ? (
+              <section className="executive-panel p-6 md:p-8">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="executive-kicker">Step 1</p>
+                    <h2 className="mt-2 text-3xl">Career Input</h2>
+                    <p className="mt-3 max-w-3xl text-base leading-8 text-[var(--executive-mute)]">
+                      Start with your story. Add roles, wins, industries, tools, strengths, and the kind of role you want next.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-[var(--executive-line)] bg-[var(--executive-accent-ghost)] px-3 py-1 text-sm text-[var(--executive-accent)]">
+                    {getStageLabel()}
+                  </span>
+                </div>
+                <div className="mt-6 grid gap-4 lg:grid-cols-[1.45fr_0.75fr]">
+                  <div className="space-y-4">
+                    <textarea
+                      className="executive-textarea min-h-[360px] w-full text-lg"
+                      value={brainDump}
+                      onChange={(event) => setBrainDump(event.target.value)}
+                    />
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" className="executive-primary-button" disabled={loading} onClick={extractFacts}>
+                        {loading ? "Working..." : "Analyze My Background"}
+                      </button>
+                      <button type="button" className="executive-secondary-button" onClick={beginFileSelection}>
+                        {uploadingFile ? "Uploading..." : "Upload Resume Or Notes"}
+                      </button>
+                      <button
+                        type="button"
+                        className="executive-secondary-button"
+                        disabled={!speechSupported}
+                        onClick={isListening ? stopVoiceCapture : startVoiceCapture}
+                      >
+                        {isListening ? "Stop Voice Input" : "Start Voice Input"}
+                      </button>
+                      <button
+                        type="button"
+                        className="executive-secondary-button"
+                        disabled={loading}
+                        onClick={() => void createFreshSession()}
+                      >
+                        Start New Session
+                      </button>
+                    </div>
+                    {error ? <p className="text-sm text-coral">{error}</p> : null}
+                    {lastVoiceTranscript ? (
+                      <div className="rounded-[1.25rem] border border-[rgba(70,80,199,0.18)] bg-[#eef2ff] px-4 py-4 text-sm leading-7 text-[#3742b8]">
+                        <p className="executive-kicker text-[#4650c7]">Latest Transcript</p>
+                        <p className="mt-2">{lastVoiceTranscript}</p>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="space-y-4">
+                    <div className="rounded-[1.5rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-5">
+                      <p className="executive-kicker">Best Results</p>
+                      <div className="mt-3 space-y-2 text-sm leading-7 text-[var(--executive-mute)]">
+                        <p>Include titles, scope, achievements, tools, and the roles you want next.</p>
+                        <p>Write naturally. The app organizes and sharpens the story later.</p>
+                        <p>Upload an existing resume if you want a faster starting point.</p>
+                      </div>
+                    </div>
+                    <div className="rounded-[1.5rem] border border-[var(--executive-line)] bg-white p-5">
+                      <p className="executive-kicker">Quick Actions</p>
+                      <button type="button" className="executive-secondary-button mt-3 w-full" onClick={() => setShowWelcome(true)}>
+                        Reopen Welcome Guide
+                      </button>
+                      <p className="mt-3 text-sm leading-7 text-[var(--executive-mute)]">
+                        {speechSupported ? voiceStatus || "Voice dictation is available in this browser." : "Voice dictation is not supported in this browser."}
                       </p>
-                    ))}
+                    </div>
                   </div>
                 </div>
+              </section>
+            ) : null}
 
-                <pre className="overflow-x-auto whitespace-pre-wrap rounded-[1.25rem] bg-ink p-5 text-sm leading-7 text-sand">
-                  {session.review_result.markdown}
-                </pre>
+            {activeStep === "facts" ? (
+              <section className="executive-panel p-6 md:p-8">
+                <p className="executive-kicker">Step 2</p>
+                <h2 className="mt-2 text-3xl">Fact Extraction Review</h2>
+                <p className="mt-3 max-w-3xl text-base leading-8 text-[var(--executive-mute)]">
+                  Clean up the extracted facts before moving on. This step makes every later result stronger.
+                </p>
+                {session?.facts.length ? (
+                  <>
+                    <div className="mt-6 flex flex-wrap gap-3">
+                      <button type="button" className="executive-secondary-button" onClick={() => setActiveStep("input")}>
+                        Back To Input
+                      </button>
+                      <button
+                        type="button"
+                        className="executive-primary-button"
+                        disabled={loading || !hasUnsavedFactChanges}
+                        onClick={saveFactEdits}
+                      >
+                        Save Fact Changes
+                      </button>
+                      <button type="button" className="executive-secondary-button" disabled={loading} onClick={refreshQuestionsFromFacts}>
+                        Continue To Questions
+                      </button>
+                    </div>
+                    {hasUnsavedFactChanges ? (
+                      <p className="mt-4 rounded-[1rem] bg-[#fff0ea] px-4 py-3 text-sm leading-6 text-coral">
+                        Save or refresh your edits before moving forward.
+                      </p>
+                    ) : null}
+                    <div className="mt-6 grid gap-3">
+                      {editableFacts.map((fact, index) => (
+                        <div key={`${index}-${fact.label}`} className="rounded-[1.35rem] border border-[var(--executive-line)] bg-white px-4 py-4">
+                          <div className="grid gap-3 md:grid-cols-[0.35fr_1fr_auto]">
+                            <input
+                              className="executive-input"
+                              value={fact.label}
+                              onChange={(event) => updateFact(index, "label", event.target.value)}
+                              placeholder="Label"
+                            />
+                            <textarea
+                              className="executive-textarea min-h-24"
+                              value={fact.value}
+                              onChange={(event) => updateFact(index, "value", event.target.value)}
+                              placeholder="Fact value"
+                            />
+                            <button type="button" className="executive-ghost-button" onClick={() => removeFact(index)}>
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button type="button" className="executive-secondary-button mt-4" onClick={addFact}>
+                      Add Fact
+                    </button>
+                  </>
+                ) : (
+                  <div className="mt-6 rounded-[1.5rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-5 text-base leading-8 text-[var(--executive-mute)]">
+                    Extract facts from the input step first, and this screen will become editable.
+                  </div>
+                )}
+              </section>
+            ) : null}
 
-                <form className="space-y-3" onSubmit={finalizeResume}>
-                  <label className="block">
-                    <span className="block text-lg text-pine">
-                      Ask for any final changes
-                    </span>
-                    <textarea
-                      className="mt-3 min-h-28 w-full rounded-2xl border border-ink/10 bg-white/85 p-4 leading-7 text-ink outline-none focus:border-coral"
-                      value={changeRequest}
-                      onChange={(event) => setChangeRequest(event.target.value)}
-                      placeholder="Example: make the summary more confident and emphasize customer operations."
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    className="rounded-full bg-pine px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={loading || hasUnsavedFactChanges}
-                  >
-                    Prepare Final Resume
+            {activeStep === "questions" ? (
+              <section className="executive-panel p-6 md:p-8">
+                <p className="executive-kicker">Step 3</p>
+                <h2 className="mt-2 text-3xl">Follow-Up Questions</h2>
+                <p className="mt-3 max-w-3xl text-base leading-8 text-[var(--executive-mute)]">
+                  Answer these to add specificity, impact, and role alignment before the first draft is generated.
+                </p>
+                {session?.questions.length ? (
+                  <form className="mt-6 space-y-4" onSubmit={buildResume}>
+                    {session.questions.map((question) => (
+                      <label
+                        key={question.id}
+                        className="block rounded-[1.35rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-4"
+                      >
+                        <span className="block leading-7 text-pine">{question.prompt}</span>
+                        <textarea
+                          className="executive-textarea mt-3 min-h-28 w-full"
+                          value={answers[question.id] ?? ""}
+                          onChange={(event) =>
+                            setAnswers((current) => ({
+                              ...current,
+                              [question.id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    ))}
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" className="executive-secondary-button" onClick={() => setActiveStep("facts")}>
+                        Back To Facts
+                      </button>
+                      <button
+                        type="submit"
+                        className="executive-primary-button"
+                        disabled={loading || hasUnsavedFactChanges}
+                      >
+                        {hasUnsavedFactChanges ? "Save Facts Or Refresh Questions First" : "Build Resume Draft"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="mt-6 rounded-[1.5rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-5 text-base leading-8 text-[var(--executive-mute)]">
+                    Refresh the workflow from the fact review step to generate questions here.
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {activeStep === "draft" ? (
+              <section className="space-y-6">
+                <section className="executive-panel p-6 md:p-8">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="executive-kicker">Step 4</p>
+                      <h2 className="mt-2 text-3xl">Draft And Improve</h2>
+                      <p className="mt-3 max-w-3xl text-base leading-8 text-[var(--executive-mute)]">
+                        Review the generated draft, inspect the transcript, and ask for final improvements.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" className="executive-secondary-button" onClick={() => setActiveStep("questions")}>
+                        Back To Questions
+                      </button>
+                      <button
+                        type="button"
+                        className="executive-secondary-button"
+                        disabled={!session?.transcript}
+                        onClick={() => downloadTextFile("session-transcript.md", session?.transcript ?? "")}
+                      >
+                        Download Transcript
+                      </button>
+                      <button
+                        type="button"
+                        className="executive-primary-button"
+                        disabled={loading || !session?.resume_draft || hasUnsavedFactChanges}
+                        onClick={reviewResume}
+                      >
+                        Review Draft
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+                    <div>
+                      <p className="executive-kicker">Resume Preview</p>
+                      <pre className="executive-code-block mt-3 min-h-[420px]">
+                        {resumeMarkdown || "Your resume draft will appear here after you answer the follow-up questions."}
+                      </pre>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="rounded-[1.5rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-4">
+                        <p className="executive-kicker">Transcript</p>
+                        {session?.transcript ? (
+                          <pre className="executive-code-block mt-3 max-h-[260px] overflow-auto">
+                            {session.transcript}
+                          </pre>
+                        ) : (
+                          <p className="mt-3 text-sm leading-7 text-[var(--executive-mute)]">
+                            The transcript appears after the first draft is generated.
+                          </p>
+                        )}
+                      </div>
+                      {session?.review_result ? (
+                        <div className="rounded-[1.5rem] border border-[var(--executive-line)] bg-white p-4">
+                          <p className="executive-kicker">AI Suggestions</p>
+                          <div className="mt-3 space-y-2">
+                            {session.review_result.notes.map((note) => (
+                              <p
+                                key={note}
+                                className="rounded-2xl border border-[var(--executive-line)] bg-[var(--executive-soft)] px-4 py-3 text-sm leading-7"
+                              >
+                                {note}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+
+                {session?.review_result ? (
+                  <section className="executive-panel p-6 md:p-8">
+                    <p className="executive-kicker">Final Pass</p>
+                    <h3 className="mt-2 text-2xl">Apply Final Changes</h3>
+                    <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_1fr]">
+                      <pre className="executive-code-block">{session.review_result.markdown}</pre>
+                      <form className="space-y-3" onSubmit={finalizeResume}>
+                        <label className="block">
+                          <span className="block text-lg text-pine">Ask for any final changes</span>
+                          <textarea
+                            className="executive-textarea mt-3 min-h-40 w-full"
+                            value={changeRequest}
+                            onChange={(event) => setChangeRequest(event.target.value)}
+                            placeholder="Example: make the summary more confident and emphasize customer operations."
+                          />
+                        </label>
+                        <div className="flex flex-wrap gap-3">
+                          <button type="submit" className="executive-primary-button" disabled={loading || hasUnsavedFactChanges}>
+                            Prepare Final Resume
+                          </button>
+                          <button
+                            type="button"
+                            className="executive-secondary-button"
+                            disabled={!canExportResume}
+                            onClick={() => setActiveStep("export")}
+                          >
+                            Go To Export
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </section>
+                ) : null}
+              </section>
+            ) : null}
+
+            {activeStep === "export" ? (
+              <section className="executive-panel p-6 md:p-8">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="executive-kicker">Step 5</p>
+                    <h2 className="mt-2 text-3xl">Export</h2>
+                    <p className="mt-3 max-w-3xl text-base leading-8 text-[var(--executive-mute)]">
+                      Choose a template, review the final resume, and download it in the format you need.
+                    </p>
+                  </div>
+                  <button type="button" className="executive-secondary-button" onClick={() => setActiveStep("draft")}>
+                    Back To Draft
                   </button>
-                </form>
-              </div>
+                </div>
+                <div className="mt-6 flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-3 rounded-full border border-ink/15 bg-white px-4 py-2 text-sm text-ink">
+                    <span className="uppercase tracking-[0.18em] text-ink/60">Template</span>
+                    <select
+                      className="bg-transparent outline-none"
+                      value={exportTemplate}
+                      onChange={(event) => setExportTemplate(event.target.value as ExportTemplate)}
+                    >
+                      <option value="professional">Professional</option>
+                      <option value="modern">Modern</option>
+                      <option value="compact">Compact</option>
+                    </select>
+                  </label>
+                  <button type="button" className="executive-secondary-button" disabled={!canExportResume} onClick={() => void downloadJsonExport()}>
+                    Export JSON
+                  </button>
+                  <button type="button" className="executive-secondary-button" disabled={!canExportResume} onClick={() => downloadTextFile("resume-output.md", resumeMarkdown)}>
+                    Download Markdown
+                  </button>
+                  <button type="button" className="executive-secondary-button" disabled={!canExportResume || loading} onClick={() => void downloadResumeFile("docx")}>
+                    Export DOCX
+                  </button>
+                  <button type="button" className="executive-primary-button" disabled={!canExportResume || loading} onClick={() => void downloadResumeFile("pdf")}>
+                    Export PDF
+                  </button>
+                </div>
+                {hasUnsavedFactChanges ? (
+                  <p className="mt-4 rounded-[1rem] bg-[#fff0ea] px-4 py-3 text-sm leading-6 text-coral">
+                    Save or refresh your fact edits before building, reviewing, or exporting to keep the resume in sync.
+                  </p>
+                ) : null}
+                <div className="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+                  <div className="rounded-[1.5rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-5">
+                    <p className="executive-kicker">Final Checklist</p>
+                    <div className="mt-3 space-y-2 text-sm leading-7 text-[var(--executive-mute)]">
+                      <p>The preview reflects the current saved facts and latest draft state.</p>
+                      <p>Choose the template that best matches the role and application style.</p>
+                      <p>Export PDF for submission and DOCX if you want to edit outside the app.</p>
+                    </div>
+                  </div>
+                  <pre className="executive-code-block min-h-[420px]">
+                    {resumeMarkdown || "Your final resume will appear here after the drafting step is complete."}
+                  </pre>
+                </div>
+              </section>
             ) : null}
-          </div>
-
-          <div className="rounded-[2rem] border border-ink/10 bg-white/80 p-6 shadow-[0_20px_60px_rgba(22,33,48,0.06)]">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-2xl">Resume Output</h2>
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-3 rounded-full border border-ink/15 bg-white px-4 py-2 text-sm text-ink">
-                  <span className="uppercase tracking-[0.18em] text-ink/60">Template</span>
-                  <select
-                    className="bg-transparent outline-none"
-                    value={exportTemplate}
-                    onChange={(event) => setExportTemplate(event.target.value as ExportTemplate)}
-                  >
-                    <option value="professional">Professional</option>
-                    <option value="modern">Modern</option>
-                    <option value="compact">Compact</option>
-                  </select>
-                </label>
-                <button
-                  className="rounded-full border border-ink/15 px-5 py-3 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!canExportResume}
-                  onClick={() => void downloadJsonExport()}
-                >
-                  Export JSON
-                </button>
-                <button
-                  className="rounded-full border border-ink/15 px-5 py-3 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!canExportResume}
-                  onClick={() => downloadTextFile("resume-output.md", resumeMarkdown)}
-                >
-                  Download Markdown
-                </button>
-                <button
-                  className="rounded-full border border-ink/15 px-5 py-3 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!canExportResume || loading}
-                  onClick={() => void downloadResumeFile("docx")}
-                >
-                  Export DOCX
-                </button>
-                <button
-                  className="rounded-full border border-ink/15 px-5 py-3 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!canExportResume || loading}
-                  onClick={() => void downloadResumeFile("pdf")}
-                >
-                  Export PDF
-                </button>
-              </div>
-            </div>
-            {hasUnsavedFactChanges ? (
-              <p className="mt-4 rounded-[1rem] bg-[#fff0ea] px-4 py-3 text-sm leading-6 text-coral">
-                Save or refresh your fact edits before building, reviewing, or exporting to keep the resume in sync.
-              </p>
-            ) : null}
-            <pre className="mt-4 overflow-x-auto whitespace-pre-wrap rounded-[1.25rem] bg-ink p-5 text-sm leading-7 text-sand">
-              {resumeMarkdown ||
-                "Your resume draft will appear here after you answer the follow-up questions."}
-            </pre>
-          </div>
           </div>
         </section>
 
@@ -1000,6 +1575,7 @@ export default function Home() {
           Developed by Ravi Kafley
         </div>
       </main>
+      )}
     </>
   );
 }
