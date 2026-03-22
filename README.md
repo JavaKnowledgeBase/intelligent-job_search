@@ -77,6 +77,65 @@ If `OPENAI_API_KEY` is set, extraction, question generation, review, and final r
 - transcript download
 - resume export to Markdown, JSON, DOCX, and PDF
 
+## User Walkthrough
+
+### Welcome And Intake
+
+When a user opens the app, they begin on the welcome screen.
+The app explains the full process in plain language and lets them start in the easiest way for them:
+
+- type a career story directly
+- upload a TXT, MD, DOCX, or PDF file
+- use browser voice dictation when supported
+
+The goal of this first step is simple: capture the user's background, strengths, tools, accomplishments, and target role in one place.
+
+### Extract Facts
+
+After the user clicks `Extract Facts`, the app turns the raw story into structured resume facts.
+These facts are meant to be easier to review than a long paragraph.
+
+Users can then:
+
+- review the extracted facts
+- edit wording
+- add missing facts
+- remove weak or incorrect facts
+- refresh follow-up questions if the facts change
+
+### Follow-Up Questions
+
+Once the facts are ready, the app asks targeted follow-up questions.
+These questions are meant to strengthen the draft by filling in missing details such as:
+
+- measurable impact
+- tools and platforms
+- target role
+- scope or responsibilities
+
+### Draft, Review, And Finalize
+
+After the user answers the follow-up questions, the app builds a resume draft.
+The user can then:
+
+- review the generated transcript
+- run an AI review pass on the draft
+- request final edits in plain language
+
+If OpenAI is unavailable, the app falls back to a local draft and review path so the flow can still continue.
+
+### Export Options
+
+After the draft or final version is ready, the user can download:
+
+- transcript as Markdown
+- resume as Markdown
+- resume as JSON
+- resume as DOCX
+- resume as PDF
+
+This makes the app useful both for direct resume editing and for passing structured output into later tools or workflows.
+
 ## Docker
 
 Create [apps/api/.env](c:/Users/rkafl/Documents/Projects/resume-intellegence/apps/api/.env) first, then from the repo root run:

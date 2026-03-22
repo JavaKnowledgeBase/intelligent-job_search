@@ -43,7 +43,7 @@ export function WelcomeOverlay({
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const welcomeMessage =
-    "Welcome to Resume Co-Pilot. Start by typing, uploading, or speaking your career story. We guide you step by step, and we do not save your content as a permanent profile.";
+    "Welcome to Resume Co-Pilot. This app helps you turn your experience into a resume draft step by step. You can type, upload, or speak your story, review the extracted facts, answer follow-up questions, refine the draft, and export your final result.";
 
   useEffect(() => {
     if (!open || !voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) {
@@ -93,9 +93,22 @@ export function WelcomeOverlay({
                   Resume Co-Pilot
                 </h1>
                 <p className="mt-3 text-base leading-8 text-ink/75">
-                  Start with the method that feels easiest for you. We will turn your rough career
-                  story into a structured resume draft and guide the rest of the process.
+                  Welcome. This workspace helps you turn a rough career story into a polished resume.
+                  You can begin by typing, uploading a resume or notes, or using browser voice
+                  dictation. From there, the app extracts key facts, asks smart follow-up questions,
+                  builds a draft, reviews it, and lets you export the result in multiple formats.
                 </p>
+              </div>
+
+              <div className="rounded-[1.75rem] border border-ink/10 bg-white/88 p-6 shadow-[0_12px_30px_rgba(22,33,48,0.06)]">
+                <p className="text-sm uppercase tracking-[0.2em] text-pine/70">How It Works</p>
+                <div className="mt-3 space-y-3 text-sm leading-7 text-ink/80">
+                  <p>1. Start with your career story using text, file upload, or voice.</p>
+                  <p>2. Let the app extract the strongest facts from your background.</p>
+                  <p>3. Review and edit those facts so the draft is based on the right information.</p>
+                  <p>4. Answer follow-up questions to add impact, tools, and target role details.</p>
+                  <p>5. Build the draft, review it, request final edits, and export it.</p>
+                </div>
               </div>
 
               <div className="rounded-[1.75rem] border border-ink/10 bg-white/88 p-6 shadow-[0_12px_30px_rgba(22,33,48,0.06)]">
@@ -188,11 +201,12 @@ export function WelcomeOverlay({
               <div className="space-y-3">
                 <p className="text-sm uppercase tracking-[0.2em] text-pine/70">Start Here</p>
                 <h2 className="text-2xl leading-tight text-ink md:text-3xl">
-                  Type your story first, or bring it in another way.
+                  Begin in the way that feels easiest for you.
                 </h2>
                 <p className="text-base leading-8 text-ink/75">
-                  Use the text area below, upload a file, or dictate your experience. When this looks
-                  right, continue into the main workflow.
+                  Use the text area below if you want to write freely, upload a file if you already
+                  have resume material, or dictate your experience out loud. Once this story looks
+                  right, continue into the guided workflow.
                 </p>
               </div>
 
@@ -240,11 +254,13 @@ export function WelcomeOverlay({
               </div>
 
               <div className="rounded-[1.35rem] border border-ink/10 bg-white/72 p-5">
-                <p className="text-sm uppercase tracking-[0.2em] text-pine/70">What Happens Next</p>
+                <p className="text-sm uppercase tracking-[0.2em] text-pine/70">What Each Step Does</p>
                 <div className="mt-3 space-y-2 text-sm leading-7 text-ink/80">
-                  <p>1. We extract the most useful facts from your story.</p>
-                  <p>2. We ask targeted follow-up questions to strengthen the resume.</p>
-                  <p>3. We build, review, and export your final draft.</p>
+                  <p>Extract Facts: turns your story into structured resume points.</p>
+                  <p>Edit Facts: lets you correct or improve what the app found.</p>
+                  <p>Follow-Up Questions: collects missing details like impact and tools.</p>
+                  <p>AI Review: improves the draft for clarity and resume quality.</p>
+                  <p>Export: downloads the finished result as Markdown, JSON, DOCX, or PDF.</p>
                 </div>
               </div>
 
