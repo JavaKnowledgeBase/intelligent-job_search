@@ -52,5 +52,14 @@ class AnswersRequest(BaseModel):
     answers: dict[str, str]
 
 
+class FactsRequest(BaseModel):
+    facts: list[ResumeFact]
+
+
 class RevisionRequest(BaseModel):
     change_request: str
+
+
+class UploadExtractResponse(BaseModel):
+    file_name: str
+    extracted_text: str

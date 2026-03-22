@@ -1,11 +1,13 @@
 node_modules/
 .next/
+*.tsbuildinfo
 dist/
 build/
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+pytest-cache-files-*/
 .mypy_cache/
 .tmp_*/
 .tmp_*.zip

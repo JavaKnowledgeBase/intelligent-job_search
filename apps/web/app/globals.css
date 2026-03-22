@@ -17,7 +17,60 @@ body {
 }
 
 textarea,
-button {
+button,
+select,
+input {
   font: inherit;
 }
 
+.welcome-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(42, 147, 213, 0.1), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(217, 107, 67, 0.08), transparent 24%);
+  pointer-events: none;
+}
+
+.welcome-noise {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.02)),
+    radial-gradient(rgba(22, 33, 48, 0.03) 1px, transparent 1px);
+  background-size: auto, 18px 18px;
+}
+
+.welcome-marquee {
+  mask-image: linear-gradient(90deg, transparent, white 10%, white 90%, transparent);
+}
+
+.welcome-track {
+  display: flex;
+  width: max-content;
+  gap: 1rem;
+  animation: welcome-scroll 24s linear infinite;
+}
+
+.welcome-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(22, 33, 48, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  padding: 0.55rem 1rem;
+  color: rgba(22, 33, 48, 0.55);
+  font-size: 0.82rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+@keyframes welcome-scroll {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-50%);
+  }
+}

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 
 from openai import OpenAI
@@ -161,15 +162,57 @@ class ResumeAIReviewer:
 
         return cleaned or fallback
 
+    def build_resume(self, session: SessionState) -> ResumeDraft:
+        fallback = build_resume_mock(session)
+        if self._client is None:
+            return fallback
+
+        facts_json = json.dumps([fact.model_dump() for fact in session.facts], ensure_ascii=True)
+        answers_json = json.dumps(session.answers, ensure_ascii=True)
+        prompt = "\n\n".join(
+            [
+                "Brain dump:",
+                session.brain_dump or "No brain dump provided.",
+                "Extracted facts:",
+                facts_json,
+                "Follow-up questions:",
+                json.dumps([question.model_dump() for question in session.questions], ensure_ascii=True),
+                "Answers:",
+                answers_json or "{}",
+            ]
+        )
+        instructions = (
+            "You are an expert resume writer creating a strong first draft from messy source material. "
+            "Return valid JSON with one key: 'markdown'. "
+            "The value must be the full resume in Markdown. "
+            "Use a confident, ATS-friendly structure with sections for Summary, Core Skills, Professional Experience, and Education or Additional Information when appropriate. "
+            "Do not invent employers, dates, degrees, or certifications. "
+            "If exact details are missing, write honest but useful bullets based only on the provided information."
+        )
+        payload = self._create_json_response(prompt, instructions)
+        if payload is None:
+            return fallback
+
+        markdown = payload.get("markdown")
+        if not isinstance(markdown, str) or not markdown.strip():
+            return fallback
+
+        return ResumeDraft(markdown=markdown.strip())
+
     def _create_json_response(self, prompt: str, instructions: str) -> dict[str, object] | None:
         if self._client is None:
             return None
 
-        response = self._client.responses.create(
-            model=self.model,
-            instructions=instructions,
-            input=prompt,
-        )
+        try:
+            response = self._client.responses.create(
+                model=self.model,
+                instructions=instructions,
+                input=prompt,
+            )
+        except Exception:
+            # Fall back to local mocks when the OpenAI API is unreachable.
+            return None
+
         output_text = response.output_text.strip()
         if not output_text:
             return None
@@ -214,32 +257,51 @@ def generate_questions_mock(session: SessionState) -> list[Question]:
 
 
 def build_resume(session: SessionState) -> ResumeDraft:
-    impact = session.answers.get("impact", "Delivered reliable results across daily operations.")
-    tools = session.answers.get("tools", "General workplace and collaboration tools")
-    target = session.answers.get("target", "Operations or support-focused roles")
+    return reviewer.build_resume(session)
+
+
+def build_resume_mock(session: SessionState) -> ResumeDraft:
+    impact = _clean_sentence(
+        session.answers.get("impact", "Delivered reliable results across daily operations.")
+    )
+    target = _clean_sentence(
+        session.answers.get("target", _guess_target_role(session.brain_dump, session.facts))
+    )
+    tools_text = session.answers.get("tools", "")
+    skills = _collect_skill_items(session, tools_text)
+    fact_lines = [fact.value.strip() for fact in session.facts if fact.value.strip()]
+    highlight_lines = _build_experience_highlights(session, impact, fact_lines)
+    experience_title = _guess_experience_heading(session.brain_dump)
+    summary = _build_summary(session, target, skills, fact_lines)
+    additional_details = _build_additional_details(session, target, skills)
+    extra_answers = [
+        _clean_sentence(value)
+        for key, value in session.answers.items()
+        if key not in {"impact", "tools", "target"} and value.strip()
+    ]
 
     markdown = "\n".join(
         [
             "# Candidate Name",
             "",
             "## Summary",
-            (
-                f"Adaptable professional targeting {target}. Brings strong coordination, "
-                "communication, and follow-through with a practical approach to problem solving."
-            ),
+            summary,
             "",
-            "## Experience Highlights",
-            f"- {impact}",
-            "- Kept work organized, visible, and moving under deadlines.",
-            "- Supported teams and stakeholders with clear communication.",
+            "## Core Skills",
+            *[f"- {skill}" for skill in skills],
             "",
-            "## Skills",
-            f"- {tools}",
-            "- Process coordination",
-            "- Documentation",
-            "- Customer and stakeholder support",
+            "## Professional Experience",
+            f"### {experience_title}",
+            *[f"- {line}" for line in highlight_lines],
+            "",
+            "## Additional Information",
+            *[f"- {line}" for line in additional_details],
         ]
     )
+
+    if extra_answers:
+        markdown += "\n" + "\n".join(f"- {answer}" for answer in extra_answers[:3])
+
     return ResumeDraft(markdown=markdown)
 
 
@@ -250,8 +312,21 @@ def build_transcript(session: SessionState) -> str:
         "## Brain Dump",
         session.brain_dump or "No brain dump provided.",
         "",
-        "## Follow-Up Answers",
+        "## Extracted Facts",
     ]
+
+    if session.facts:
+        for fact in session.facts:
+            lines.append(f"- {fact.label}: {fact.value}")
+    else:
+        lines.append("No extracted facts available.")
+
+    lines.extend(
+        [
+            "",
+        "## Follow-Up Answers",
+        ]
+    )
 
     if session.answers:
         for question in session.questions:
@@ -322,3 +397,195 @@ def extract_facts(brain_dump: str) -> list[ResumeFact]:
 
 def generate_questions(session: SessionState) -> list[Question]:
     return reviewer.generate_questions(session)
+
+
+def _clean_sentence(value: str) -> str:
+    cleaned = " ".join(value.strip().split())
+    if not cleaned:
+        return ""
+    cleaned = cleaned.rstrip(" .!?")
+    return f"{cleaned}."
+
+
+def _guess_target_role(brain_dump: str, facts: list[ResumeFact]) -> str:
+    combined = " ".join([brain_dump, *[fact.value for fact in facts]]).lower()
+    role_keywords = [
+        "operations coordinator",
+        "customer support specialist",
+        "project coordinator",
+        "administrative coordinator",
+        "office manager",
+        "operations specialist",
+        "customer success specialist",
+    ]
+    for keyword in role_keywords:
+        if keyword in combined:
+            return keyword.title()
+
+    if "operations" in combined and "support" in combined:
+        return "Operations and Support Roles"
+    if "operations" in combined:
+        return "Operations Roles"
+    if "support" in combined or "customer" in combined:
+        return "Customer Support Roles"
+    if "project" in combined or "coordination" in combined:
+        return "Project Coordination Roles"
+    return "Operations or support-focused roles"
+
+
+def _split_items(text: str) -> list[str]:
+    normalized = text.replace("\n", ",")
+    parts = re.split(r",|/|\||;| and ", normalized)
+    cleaned: list[str] = []
+    seen: set[str] = set()
+
+    for part in parts:
+        item = " ".join(part.strip().split())
+        if len(item) < 2:
+            continue
+        lowered = item.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(item)
+
+    return cleaned
+
+
+def _collect_skill_items(session: SessionState, tools_text: str) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+
+    def add(item: str) -> None:
+        cleaned = " ".join(item.strip().split())
+        if not cleaned:
+            return
+        lowered = cleaned.lower()
+        canonical = {
+            "crm": "crm systems",
+            "crm tool": "crm systems",
+            "crm tools": "crm systems",
+            "ticketing": "ticketing systems",
+        }.get(lowered, lowered)
+        if canonical in seen:
+            return
+        if lowered in seen:
+            return
+        seen.add(canonical)
+        items.append(cleaned)
+
+    for item in _split_items(tools_text):
+        add(item)
+
+    combined = " ".join([session.brain_dump, *[fact.value for fact in session.facts]])
+    keyword_map = [
+        ("excel", "Excel"),
+        ("crm", "CRM systems"),
+        ("ticket", "Ticketing systems"),
+        ("customer", "Customer communication"),
+        ("support", "Support operations"),
+        ("coordination", "Cross-functional coordination"),
+        ("documentation", "Documentation"),
+        ("workflow", "Workflow improvement"),
+        ("scheduling", "Scheduling"),
+        ("operations", "Operations support"),
+    ]
+
+    lowered = combined.lower()
+    for needle, label in keyword_map:
+        if needle in lowered:
+            add(label)
+
+    defaults = [
+        "Process coordination",
+        "Documentation and workflow support",
+        "Stakeholder communication",
+    ]
+    for item in defaults:
+        if len(items) >= 6:
+            break
+        add(item)
+
+    return items[:6]
+
+
+def _build_summary(session: SessionState, target: str, skills: list[str], fact_lines: list[str]) -> str:
+    strength = fact_lines[0] if fact_lines else "Dependable support across fast-moving team environments."
+    lead_skill = skills[0] if skills else "cross-functional coordination"
+    target_text = target.rstrip(".")
+    return (
+        f"Adaptable professional targeting {target_text}. Brings strength in {lead_skill}, "
+        f"clear communication, and practical problem solving. Known for {strength.rstrip('.').lower()}."
+    )
+
+
+def _build_experience_highlights(
+    session: SessionState, impact: str, fact_lines: list[str]
+) -> list[str]:
+    highlights: list[str] = [impact]
+
+    for fact in fact_lines:
+        if len(_split_items(fact)) >= 3 and len(fact.split()) <= 8:
+            continue
+        cleaned = _clean_sentence(fact)
+        if cleaned and cleaned.lower() not in {item.lower() for item in highlights}:
+            highlights.append(cleaned)
+        if len(highlights) >= 4:
+            break
+
+    sentence_candidates = _extract_brain_dump_sentences(session.brain_dump)
+    for sentence in sentence_candidates:
+        if sentence.lower() not in {item.lower() for item in highlights}:
+            highlights.append(sentence)
+        if len(highlights) >= 5:
+            break
+
+    defaults = [
+        "Kept work organized, visible, and moving under deadlines.",
+        "Supported teams and stakeholders with timely, clear updates.",
+    ]
+    for item in defaults:
+        if len(highlights) >= 5:
+            break
+        if item.lower() not in {line.lower() for line in highlights}:
+            highlights.append(item)
+
+    return highlights[:5]
+
+
+def _extract_brain_dump_sentences(brain_dump: str) -> list[str]:
+    raw_sentences = re.split(r"(?<=[.!?])\s+", brain_dump.strip())
+    cleaned: list[str] = []
+
+    for sentence in raw_sentences:
+        candidate = _clean_sentence(sentence)
+        if not candidate:
+            continue
+        if len(candidate.split()) < 5:
+            continue
+        cleaned.append(candidate)
+
+    return cleaned
+
+
+def _guess_experience_heading(brain_dump: str) -> str:
+    lowered = brain_dump.lower()
+    if "customer" in lowered or "support" in lowered:
+        return "Support and Operations Experience"
+    if "project" in lowered or "coordinate" in lowered:
+        return "Project and Coordination Experience"
+    return "Experience Highlights"
+
+
+def _build_additional_details(
+    session: SessionState, target: str, skills: list[str]
+) -> list[str]:
+    details = [f"Target role: {target}"]
+    if skills:
+        details.append(f"Key tools and strengths: {', '.join(skills[:4])}")
+
+    if session.facts:
+        labeled_fact = session.facts[0]
+        details.append(f"{labeled_fact.label}: {labeled_fact.value}")
+
+    return details[:3]

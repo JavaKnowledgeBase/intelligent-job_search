@@ -1,0 +1,13 @@
+.git
+.gitignore
+node_modules
+apps/web/node_modules
+apps/web/.next
+apps/api/.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.tmp_*
+.tmp_*.zip
+*.docx
