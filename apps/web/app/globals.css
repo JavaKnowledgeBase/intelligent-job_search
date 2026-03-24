@@ -668,6 +668,66 @@ input {
   white-space: nowrap;
 }
 
+.download-balloon-layer {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  overflow: hidden;
+}
+
+.download-balloon {
+  position: absolute;
+  left: 50%;
+  bottom: -7.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translateX(-50%);
+  animation: balloon-rise 5.6s ease-out forwards;
+}
+
+.download-balloon::before {
+  content: "";
+  display: block;
+  width: 6.9rem;
+  height: 8.5rem;
+  border-radius: 58% 58% 54% 54%;
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.62), transparent 20%),
+    linear-gradient(180deg, #2d8aa5 0%, #1c6b84 58%, #165265 100%);
+  box-shadow:
+    0 20px 40px rgba(28, 107, 132, 0.24),
+    inset -10px -16px 22px rgba(11, 46, 57, 0.22);
+}
+
+.download-balloon-knot {
+  margin-top: -0.15rem;
+  width: 0;
+  height: 0;
+  border-left: 0.45rem solid transparent;
+  border-right: 0.45rem solid transparent;
+  border-top: 0.8rem solid #165265;
+}
+
+.download-balloon-string {
+  width: 2px;
+  height: 7.5rem;
+  background: linear-gradient(180deg, rgba(125, 148, 161, 0.9), rgba(125, 148, 161, 0.2));
+}
+
+.download-balloon-label {
+  position: absolute;
+  top: 2.5rem;
+  width: 4.9rem;
+  text-align: center;
+  font-size: 0.73rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: white;
+  text-shadow: 0 1px 2px rgba(8, 25, 36, 0.3);
+}
+
 @keyframes welcome-scroll {
   from {
     transform: translateX(0);
@@ -675,5 +735,42 @@ input {
 
   to {
     transform: translateX(-50%);
+  }
+}
+
+@keyframes balloon-rise {
+  0% {
+    transform: translateX(-50%) translateY(0) rotate(-5deg);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 1;
+  }
+
+  18% {
+    transform: translateX(calc(-50% - 0.3rem)) translateY(-10vh) rotate(-2deg);
+  }
+
+  32% {
+    transform: translateX(calc(-50% + 1.1rem)) translateY(-24vh) rotate(4deg);
+  }
+
+  48% {
+    transform: translateX(calc(-50% - 1.4rem)) translateY(-42vh) rotate(-3deg);
+  }
+
+  64% {
+    transform: translateX(calc(-50% + 0.8rem)) translateY(-61vh) rotate(2deg);
+  }
+
+  80% {
+    transform: translateX(calc(-50% - 1rem)) translateY(-82vh) rotate(-4deg);
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateX(calc(-50% + 0.6rem)) translateY(-108vh) rotate(3deg);
+    opacity: 0;
   }
 }

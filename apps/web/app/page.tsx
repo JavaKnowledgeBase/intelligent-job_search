@@ -54,6 +54,7 @@ type FlowStep = "input" | "facts" | "questions" | "draft" | "export";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001";
 const STORAGE_KEY = "resume-copilot-session";
+const RETURN_TO_INTAKE_KEY = "resume-copilot-return-to-intake";
 
 const defaultBrainDump =
   "I have worked in operations, customer support, and coordination roles. I am good at solving problems, keeping people updated, and making sure work gets done on time. I have helped teams stay organized and customers feel supported.";
@@ -79,6 +80,7 @@ export default function Home() {
   const [activeStep, setActiveStep] = useState<FlowStep>("input");
   const [editableResumeMarkdown, setEditableResumeMarkdown] = useState("");
   const [savingResume, setSavingResume] = useState(false);
+  const [showDownloadBalloon, setShowDownloadBalloon] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
@@ -95,6 +97,16 @@ export default function Home() {
   const canExportResume = Boolean(resumeMarkdown) && !hasUnsavedFactChanges;
   const hasUnsavedResumeChanges = editableResumeMarkdown.trim() !== resumeMarkdown.trim();
 
+  function celebrateDownload() {
+    setShowDownloadBalloon(false);
+    if (typeof window !== "undefined") {
+      window.setTimeout(() => setShowDownloadBalloon(true), 20);
+      window.setTimeout(() => setShowDownloadBalloon(false), 3200);
+      return;
+    }
+    setShowDownloadBalloon(true);
+  }
+
   useEffect(() => {
     setSpeechSupported(
       typeof window !== "undefined" &&
@@ -102,7 +114,7 @@ export default function Home() {
         typeof navigator !== "undefined" &&
         Boolean(navigator.mediaDevices?.getUserMedia),
     );
-    void restoreSession();
+    void initializeSession();
 
     return () => {
       dataChannelRef.current?.close();
@@ -165,7 +177,7 @@ export default function Home() {
     session?.review_result,
   ]);
 
-  function downloadTextFile(filename: string, contents: string) {
+  function downloadTextFile(filename: string, contents: string, celebrate = false) {
     if (!contents.trim()) {
       setError("There is nothing ready to download yet.");
       return;
@@ -180,6 +192,9 @@ export default function Home() {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
+    if (celebrate) {
+      celebrateDownload();
+    }
   }
 
   async function downloadResumeFile(format: "pdf" | "docx") {
@@ -207,6 +222,7 @@ export default function Home() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
+      celebrateDownload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to export your resume.");
     }
@@ -234,6 +250,7 @@ export default function Home() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
+      celebrateDownload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to export JSON.");
     }
@@ -291,6 +308,58 @@ export default function Home() {
     }
   }
 
+  function resetVoiceCaptureState() {
+    dataChannelRef.current?.close();
+    dataChannelRef.current = null;
+    peerConnectionRef.current?.close();
+    peerConnectionRef.current = null;
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+    partialTranscriptRef.current.clear();
+    completedTranscriptRef.current = [];
+    setIsListening(false);
+    setVoiceStatus("");
+  }
+
+  async function clearBrowserState() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.removeItem(STORAGE_KEY);
+    window.sessionStorage.removeItem(RETURN_TO_INTAKE_KEY);
+    if ("caches" in window) {
+      const cacheKeys = await window.caches.keys();
+      await Promise.all(cacheKeys.map((key) => window.caches.delete(key)));
+    }
+  }
+
+  async function initializeSession() {
+    if (typeof window === "undefined") {
+      await restoreSession();
+      return;
+    }
+
+    const shouldPreserve = window.sessionStorage.getItem(RETURN_TO_INTAKE_KEY) === "true";
+    window.sessionStorage.removeItem(RETURN_TO_INTAKE_KEY);
+
+    if (!shouldPreserve) {
+      await clearBrowserState();
+      await createFreshSession({
+        brainDump: "",
+        voiceTranscript: "",
+        uploadedFileName: "",
+        uploadedFileText: "",
+        answers: {},
+        changeRequest: "",
+        exportTemplate: "professional",
+      });
+      return;
+    }
+
+    await restoreSession();
+  }
+
   async function restoreSession() {
     setLoading(true);
     setError("");
@@ -336,6 +405,48 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function resetEverything() {
+    resetVoiceCaptureState();
+    setError("");
+    setEditableFacts([]);
+    setEditableResumeMarkdown("");
+    setAnswers({});
+    setChangeRequest("");
+    setUploadedFileName("");
+    setUploadedFileText("");
+    setLastVoiceTranscript("");
+    setBrainDump("");
+    setSession(null);
+    setSessionReady(false);
+    setShowWelcome(true);
+    setActiveStep("input");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
+    if (typeof window !== "undefined") {
+      await clearBrowserState();
+      window.sessionStorage.clear();
+    }
+
+    await createFreshSession({
+      brainDump: "",
+      voiceTranscript: "",
+      uploadedFileName: "",
+      uploadedFileText: "",
+      answers: {},
+      changeRequest: "",
+      exportTemplate: "professional",
+    });
+  }
+
+  function returnToIntake() {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(RETURN_TO_INTAKE_KEY, "true");
+    }
+    setShowWelcome(true);
   }
 
   function getCombinedBrainDump() {
@@ -935,6 +1046,39 @@ export default function Home() {
     return "Step 1 of 4";
   }
 
+  function getWorkspaceTranscriptPreview() {
+    if (!uploadedFileName) {
+      return session?.transcript || "";
+    }
+
+    const lines = [
+      "# Source Notes",
+      "",
+      "## Intake Sources",
+      `- Uploaded resume: ${uploadedFileName}`,
+      `- Typed notes included: ${brainDump.trim() ? "Yes" : "No"}`,
+      `- Voice notes included: ${lastVoiceTranscript.trim() ? "Yes" : "No"}`,
+    ];
+
+    if (session?.facts.length) {
+      lines.push("", "## Extracted Facts");
+      for (const fact of session.facts) {
+        lines.push(`- ${fact.label}: ${fact.value}`);
+      }
+    }
+
+    if (session?.questions.length) {
+      lines.push("", "## Follow-Up Answers");
+      for (const question of session.questions) {
+        lines.push(`### ${question.prompt}`);
+        lines.push(answers[question.id] || "No answer provided.");
+        lines.push("");
+      }
+    }
+
+    return lines.join("\n").trim();
+  }
+
   const flowSteps: Array<{
     id: FlowStep;
     label: string;
@@ -983,6 +1127,15 @@ export default function Home() {
 
   return (
     <>
+      {showDownloadBalloon ? (
+        <div className="download-balloon-layer" aria-hidden="true">
+          <div className="download-balloon">
+            <span className="download-balloon-knot" />
+            <span className="download-balloon-string" />
+            <span className="download-balloon-label">Best of luck</span>
+          </div>
+        </div>
+      ) : null}
       <input
         ref={fileInputRef}
         hidden
@@ -997,7 +1150,7 @@ export default function Home() {
         lastVoiceTranscript={lastVoiceTranscript}
         loading={loading}
         onBrainDumpChange={setBrainDump}
-        onUseTypedIntro={() => setSessionReady(true)}
+        onResetEverything={() => void resetEverything()}
         onProcessBuildResume={processAndBuildResumeFromWelcome}
         onVoiceTranscriptChange={handleVoiceTranscriptChange}
         onClearBrainDump={clearTypedInput}
@@ -1009,23 +1162,23 @@ export default function Home() {
         isListening={isListening}
         voiceStatus={voiceStatus}
         uploadingFile={uploadingFile}
-        onClose={() => setShowWelcome(false)}
+        onClose={returnToIntake}
       />
       {showDraftWorkspace ? (
         <main className="mx-auto flex h-screen w-full max-w-[1600px] flex-col p-4">
           <section className="grid h-full min-h-0 gap-4 xl:grid-cols-[40%_60%]">
             <aside className="executive-panel executive-panel-stage executive-panel-support flex min-h-0 flex-col overflow-hidden p-6">
               <div className="shrink-0">
-                <BrandLogo />
-                <h1 className="executive-display mt-5 text-3xl leading-[0.95] text-ink md:text-[3.2rem]">
+                <BrandLogo compact />
+                <h1 className="executive-display mt-4 text-[2rem] leading-[0.95] text-ink md:text-[2.55rem]">
                   Resume Co-Pilot
                 </h1>
-                <p className="mt-3 max-w-xl text-base leading-7 text-[var(--executive-mute)]">
-                  You can edit the resume if more changes required and download.
+                <p className="mt-2 max-w-xl text-[0.97rem] leading-7 text-[var(--executive-mute)]">
+                  Review the draft, make final refinements, and export with confidence.
                 </p>
               </div>
 
-              <div className="mt-6 grid shrink-0 gap-3 md:grid-cols-3">
+              <div className="mt-5 grid shrink-0 gap-3 md:grid-cols-3">
                 <button
                   type="button"
                   className="executive-primary-button w-full"
@@ -1060,9 +1213,9 @@ export default function Home() {
                   </span>
                 </div>
                 <div className="mt-3 h-[calc(100%-2rem)] overflow-auto rounded-[1.1rem] border border-[var(--executive-line)] bg-white/80 p-4 text-sm leading-7 text-[var(--executive-mute)]">
-                  {session?.transcript ? (
+                  {getWorkspaceTranscriptPreview() ? (
                     <pre className="whitespace-pre-wrap font-inherit text-inherit">
-                      {session.transcript}
+                      {getWorkspaceTranscriptPreview()}
                     </pre>
                   ) : (
                     <p>The transcript will appear here after the resume is built.</p>
@@ -1081,7 +1234,7 @@ export default function Home() {
                   <button
                     type="button"
                     className="executive-secondary-button"
-                    onClick={() => setShowWelcome(true)}
+                    onClick={returnToIntake}
                   >
                     Back To Intake
                   </button>
@@ -1286,7 +1439,7 @@ export default function Home() {
                     </div>
                     <div className="rounded-[1.5rem] border border-[var(--executive-line)] bg-white p-5">
                       <p className="executive-kicker">Quick Actions</p>
-                      <button type="button" className="executive-secondary-button mt-3 w-full" onClick={() => setShowWelcome(true)}>
+                      <button type="button" className="executive-secondary-button mt-3 w-full" onClick={returnToIntake}>
                         Reopen Welcome Guide
                       </button>
                       <p className="mt-3 text-sm leading-7 text-[var(--executive-mute)]">
@@ -1549,7 +1702,7 @@ export default function Home() {
                   <button type="button" className="executive-secondary-button" disabled={!canExportResume} onClick={() => void downloadJsonExport()}>
                     Export JSON
                   </button>
-                  <button type="button" className="executive-secondary-button" disabled={!canExportResume} onClick={() => downloadTextFile("resume-output.md", resumeMarkdown)}>
+                  <button type="button" className="executive-secondary-button" disabled={!canExportResume} onClick={() => downloadTextFile("resume-output.md", resumeMarkdown, true)}>
                     Download Markdown
                   </button>
                   <button type="button" className="executive-secondary-button" disabled={!canExportResume || loading} onClick={() => void downloadResumeFile("docx")}>

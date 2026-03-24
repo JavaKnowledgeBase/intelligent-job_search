@@ -10,7 +10,7 @@ type WelcomeOverlayProps = {
   loading: boolean;
   onBrainDumpChange: (value: string) => void;
   onVoiceTranscriptChange: (value: string) => void;
-  onUseTypedIntro: () => void;
+  onResetEverything: () => void;
   onProcessBuildResume: () => void;
   onClearBrainDump: () => void;
   onClearVoiceTranscript: () => void;
@@ -32,7 +32,7 @@ export function WelcomeOverlay({
   loading,
   onBrainDumpChange,
   onVoiceTranscriptChange,
-  onUseTypedIntro,
+  onResetEverything,
   onProcessBuildResume,
   onClearBrainDump,
   onClearVoiceTranscript,
@@ -103,12 +103,12 @@ export function WelcomeOverlay({
                 <button
                   type="button"
                   className="welcome-action-tile"
-                  onClick={onUseTypedIntro}
+                  onClick={onResetEverything}
                 >
                   <span className="block text-[0.72rem] uppercase tracking-[0.18em] text-pine/60">
-                    Type
+                    Reset
                   </span>
-                  <span className="mt-1 block text-[1.1rem] leading-none text-ink md:text-[1.2rem]">Type It</span>
+                  <span className="mt-1 block text-[1.1rem] leading-none text-ink md:text-[1.2rem]">Reset Everything</span>
                 </button>
               </div>
 
