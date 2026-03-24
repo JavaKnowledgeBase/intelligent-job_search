@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Resume Co-Pilot",
-  description: "Privacy-first conversational resume builder",
+  title: "Your Resume Upgrade Workspace",
+  description: "Privacy-first professional resume builder and upgrade workspace",
 };
 
 export default function RootLayout({
@@ -17,4 +17,3 @@ export default function RootLayout({
     </html>
   );
 }
-

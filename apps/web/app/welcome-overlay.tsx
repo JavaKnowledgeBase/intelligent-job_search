@@ -63,17 +63,17 @@ export function WelcomeOverlay({
           <div className="grid h-full gap-3 xl:grid-cols-[34%_66%]">
             <section className="welcome-dashboard-panel flex h-full min-h-0 flex-col p-5">
               <div className="welcome-brand-header">
-                <div className="relative z-[2] shrink-0">
+                <div className="welcome-brand-logo relative z-[2] shrink-0">
                   <BrandLogo compact />
                 </div>
                 <div className="welcome-brand-copy">
                   <p className="welcome-brand-eyebrow">Welcome</p>
-                  <h1 className="welcome-brand-title">Resume Co-Pilot</h1>
+                  <h1 className="welcome-brand-title">Your Resume Upgrade Workspace</h1>
                 </div>
               </div>
 
               <div className="mt-4">
-                <p className="text-[0.72rem] uppercase tracking-[0.22em] text-[var(--executive-mute)]">Guided Resume Workspace</p>
+                <p className="text-[0.72rem] uppercase tracking-[0.22em] text-[var(--executive-mute)]">Professional Resume Builder</p>
                 <p className="mt-2 text-[0.94rem] leading-6 text-ink/78">
                   Start by recording, typing, or uploading existing notes. We will extract facts, ask follow-up questions, and build the draft with you.
                 </p>

@@ -429,17 +429,44 @@ input {
 }
 
 .welcome-brand-header {
-  min-height: 4.9rem;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
-  gap: 0.8rem;
-  overflow: hidden;
+  gap: 0.6rem;
+  min-height: 4.85rem;
+  width: 100%;
+}
+
+.welcome-brand-logo {
+  flex-shrink: 0;
+  width: 12.1rem;
+  max-width: 40%;
+}
+
+.welcome-brand-logo > div {
+  gap: 0.42rem !important;
+  padding: 0.6rem 0.74rem !important;
+  width: 100%;
+}
+
+.welcome-brand-logo svg {
+  width: 3.15rem;
+  height: 3.15rem;
+}
+
+.welcome-brand-logo p:first-of-type {
+  font-size: 0.82rem !important;
+}
+
+.welcome-brand-logo p:last-of-type {
+  font-size: 0.64rem !important;
 }
 
 .welcome-brand-copy {
   min-width: 0;
-  max-width: 14rem;
+  flex: 1 1 auto;
+  max-width: none;
+  padding-top: 0.04rem;
 }
 
 .welcome-brand-eyebrow {
@@ -451,12 +478,15 @@ input {
 }
 
 .welcome-brand-title {
-  margin: 0.15rem 0 0;
+  margin: 0.12rem 0 0;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.8rem, 2.2vw, 2.5rem);
-  line-height: 0.86;
-  letter-spacing: -0.03em;
-  color: #152033;
+  font-size: clamp(1.06rem, 1.22vw, 1.42rem);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  background: linear-gradient(135deg, #8f7741 0%, #4e5258 52%, #2a3340 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
   opacity: 0.98;
 }
 
@@ -605,7 +635,34 @@ input {
   }
 
   .welcome-brand-header {
+    gap: 0.55rem;
     min-height: 4.5rem;
+  }
+
+  .welcome-brand-logo {
+    width: 10.7rem;
+    max-width: 45%;
+  }
+
+  .welcome-brand-logo > div {
+    padding: 0.54rem 0.68rem !important;
+  }
+
+  .welcome-brand-logo svg {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .welcome-brand-logo p:first-of-type {
+    font-size: 0.74rem !important;
+  }
+
+  .welcome-brand-logo p:last-of-type {
+    font-size: 0.58rem !important;
+  }
+
+  .welcome-brand-title {
+    font-size: 0.98rem;
   }
 
   .welcome-input-shell {
@@ -632,7 +689,7 @@ input {
   }
 
   .welcome-brand-title {
-    font-size: 1.7rem;
+    font-size: 1.36rem;
   }
 }
 

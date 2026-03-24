@@ -1171,7 +1171,7 @@ export default function Home() {
               <div className="shrink-0">
                 <BrandLogo compact />
                 <h1 className="executive-display mt-4 text-[2rem] leading-[0.95] text-ink md:text-[2.55rem]">
-                  Resume Co-Pilot
+                  Your Resume Upgrade Workspace
                 </h1>
                 <p className="mt-2 max-w-xl text-[0.97rem] leading-7 text-[var(--executive-mute)]">
                   Review the draft, make final refinements, and export with confidence.
@@ -1270,7 +1270,7 @@ export default function Home() {
         <div className="relative grid gap-8 md:grid-cols-[1.3fr_0.9fr]">
         <div className="min-w-0 space-y-6">
           <BrandLogo />
-          <p className="text-sm uppercase tracking-[0.35em] text-[var(--executive-bg-strong)]">Resume Co-Pilot</p>
+          <p className="text-sm uppercase tracking-[0.35em] text-[var(--executive-bg-strong)]">Your Resume Upgrade Workspace</p>
           <h1 className="executive-display max-w-4xl text-4xl leading-[1.02] text-white md:text-6xl">
             Transform a rough career story into a boardroom-ready resume.
           </h1>
