@@ -28,6 +28,14 @@ from .services import (
     review_resume,
     transcribe_audio,
 )
+from .safety import (
+    collect_session_moderation_notes,
+    sanitize_answer_map,
+    sanitize_facts,
+    sanitize_markdown_output,
+    sanitize_user_text,
+    validate_audio_upload,
+)
 from .store import MemorySessionStore
 from .uploads import extract_text_from_upload
 
@@ -52,11 +60,11 @@ def require_session(session_id: str) -> SessionState:
 
 def get_resume_markdown(session: SessionState) -> str:
     if session.final_resume is not None:
-        return session.final_resume.markdown
+        return sanitize_markdown_output(session.final_resume.markdown)
     if session.review_result is not None:
-        return session.review_result.markdown
+        return sanitize_markdown_output(session.review_result.markdown)
     if session.resume_draft is not None:
-        return session.resume_draft.markdown
+        return sanitize_markdown_output(session.resume_draft.markdown)
     raise HTTPException(status_code=400, detail="No resume is ready to export yet")
 
 
@@ -65,6 +73,17 @@ def clear_generated_outputs(session: SessionState) -> None:
     session.transcript = ""
     session.review_result = None
     session.final_resume = None
+
+
+def refresh_moderation_notes(
+    session: SessionState,
+    *,
+    brain_dump_source: str | None = None,
+    answer_source: dict[str, str] | None = None,
+) -> None:
+    source_brain_dump = session.brain_dump if brain_dump_source is None else brain_dump_source
+    source_answers = session.answers if answer_source is None else answer_source
+    session.moderation_notes = collect_session_moderation_notes(source_brain_dump, source_answers)
 
 
 @app.get("/health")
@@ -107,6 +126,10 @@ async def transcribe_audio_upload(file: UploadFile = File(...)) -> AudioTranscri
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded audio is empty")
+    try:
+        validate_audio_upload(file.filename, content)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
     transcript = transcribe_audio(file.filename, content)
     if not transcript:
@@ -138,8 +161,10 @@ def get_session(session_id: str) -> SessionState:
 @app.post("/sessions/{session_id}/intake", response_model=SessionState)
 def intake(session_id: str, payload: IntakeRequest) -> SessionState:
     session = require_session(session_id)
-    session.brain_dump = payload.brain_dump
-    session.facts = extract_facts(payload.brain_dump)
+    safe_brain_dump = sanitize_user_text(payload.brain_dump)
+    session.brain_dump = safe_brain_dump
+    session.facts = extract_facts(safe_brain_dump)
+    refresh_moderation_notes(session, brain_dump_source=payload.brain_dump, answer_source=session.answers)
     clear_generated_outputs(session)
     session.status = "intake_complete"
     return store.save(session)
@@ -157,7 +182,8 @@ def questions(session_id: str) -> SessionState:
 @app.post("/sessions/{session_id}/facts", response_model=SessionState)
 def update_facts(session_id: str, payload: FactsRequest) -> SessionState:
     session = require_session(session_id)
-    session.facts = [fact for fact in payload.facts if fact.label.strip() and fact.value.strip()]
+    session.facts = sanitize_facts(payload.facts)
+    refresh_moderation_notes(session)
     clear_generated_outputs(session)
     if session.questions:
         session.status = "questions_ready"
@@ -169,7 +195,10 @@ def update_facts(session_id: str, payload: FactsRequest) -> SessionState:
 @app.post("/sessions/{session_id}/answers", response_model=SessionState)
 def answers(session_id: str, payload: AnswersRequest) -> SessionState:
     session = require_session(session_id)
-    session.answers.update(payload.answers)
+    sanitized_answers = sanitize_answer_map(payload.answers)
+    raw_answer_source = {**session.answers, **{str(key): str(value) for key, value in payload.answers.items()}}
+    session.answers.update(sanitized_answers)
+    refresh_moderation_notes(session, answer_source=raw_answer_source)
     session.resume_draft = None
     session.transcript = ""
     session.review_result = None
@@ -180,7 +209,7 @@ def answers(session_id: str, payload: AnswersRequest) -> SessionState:
 @app.post("/sessions/{session_id}/resume", response_model=SessionState)
 def resume(session_id: str) -> SessionState:
     session = require_session(session_id)
-    session.resume_draft = build_resume(session)
+    session.resume_draft = ResumeDraft(markdown=sanitize_markdown_output(build_resume(session).markdown))
     session.transcript = build_transcript(session)
     session.status = "resume_ready"
     return store.save(session)
@@ -189,7 +218,9 @@ def resume(session_id: str) -> SessionState:
 @app.post("/sessions/{session_id}/resume-draft", response_model=SessionState)
 def update_resume_draft(session_id: str, payload: ResumeDraftUpdateRequest) -> SessionState:
     session = require_session(session_id)
-    session.resume_draft = ResumeDraft(markdown=payload.markdown.strip() or "# Resume Draft")
+    session.resume_draft = ResumeDraft(
+        markdown=sanitize_markdown_output(payload.markdown.strip() or "# Resume Draft")
+    )
     session.review_result = None
     session.final_resume = None
     session.status = "resume_ready"
@@ -199,7 +230,10 @@ def update_resume_draft(session_id: str, payload: ResumeDraftUpdateRequest) -> S
 @app.post("/sessions/{session_id}/review", response_model=SessionState)
 def review(session_id: str) -> SessionState:
     session = require_session(session_id)
-    session.review_result = review_resume(session)
+    result = review_resume(session)
+    session.review_result = result.model_copy(
+        update={"markdown": sanitize_markdown_output(result.markdown)}
+    )
     session.status = "review_ready"
     return store.save(session)
 
@@ -207,7 +241,8 @@ def review(session_id: str) -> SessionState:
 @app.post("/sessions/{session_id}/finalize", response_model=SessionState)
 def finalize(session_id: str, payload: RevisionRequest) -> SessionState:
     session = require_session(session_id)
-    session.final_resume = apply_revision(session, payload.change_request)
+    result = apply_revision(session, sanitize_user_text(payload.change_request))
+    session.final_resume = ResumeDraft(markdown=sanitize_markdown_output(result.markdown))
     session.status = "final_ready"
     return store.save(session)
 

@@ -20,6 +20,7 @@ type SessionState = {
   facts: ResumeFact[];
   questions: Question[];
   answers: Record<string, string>;
+  moderation_notes: string[];
   resume_draft: { markdown: string } | null;
   transcript: string;
   review_result: { notes: string[]; markdown: string } | null;
@@ -1013,7 +1014,7 @@ export default function Home() {
       {showDraftWorkspace ? (
         <main className="mx-auto flex h-screen w-full max-w-[1600px] flex-col p-4">
           <section className="grid h-full min-h-0 gap-4 xl:grid-cols-[40%_60%]">
-            <aside className="executive-panel flex min-h-0 flex-col overflow-hidden p-6">
+            <aside className="executive-panel executive-panel-stage executive-panel-support flex min-h-0 flex-col overflow-hidden p-6">
               <div className="shrink-0">
                 <BrandLogo />
                 <h1 className="executive-display mt-5 text-3xl leading-[0.95] text-ink md:text-[3.2rem]">
@@ -1070,7 +1071,7 @@ export default function Home() {
               </div>
             </aside>
 
-            <section className="executive-panel flex min-h-0 flex-col overflow-hidden p-5 md:p-6">
+            <section className="executive-panel executive-panel-stage executive-panel-support flex min-h-0 flex-col overflow-hidden p-5 md:p-6">
               <div className="flex shrink-0 items-start justify-between gap-4">
                 <div>
                   <p className="executive-kicker">Editable Resume</p>
@@ -1097,7 +1098,7 @@ export default function Home() {
 
               {error ? <p className="mt-4 text-sm text-coral">{error}</p> : null}
 
-              <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-[1.6rem] border border-[rgba(24,36,53,0.08)] bg-[linear-gradient(180deg,#fefefe_0%,#f8fafc_100%)] p-4 md:p-6">
+              <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-[1.6rem] border border-[rgba(19,32,51,0.08)] bg-[linear-gradient(180deg,#ffffff_0%,#f4f8fb_100%)] p-4 md:p-6">
                 <textarea
                   className="h-full w-full resize-none overflow-auto rounded-[1.25rem] border border-[rgba(24,36,53,0.08)] bg-white px-6 py-6 font-['Georgia'] text-[15px] leading-7 text-ink outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
                   value={editableResumeMarkdown}
@@ -1172,7 +1173,7 @@ export default function Home() {
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[300px_1fr]">
-          <aside className="executive-panel h-fit p-4 md:sticky md:top-6">
+          <aside className="executive-panel executive-panel-stage executive-panel-progress h-fit p-4 md:sticky md:top-6">
             <p className="executive-kicker">Workflow</p>
             <h2 className="mt-2 text-2xl">Progress</h2>
             <div className="mt-5 space-y-3">
@@ -1208,11 +1209,21 @@ export default function Home() {
             <div className="mt-5 rounded-[1.35rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] px-4 py-4 text-sm leading-7 text-[var(--executive-mute)]">
               Use the sidebar to revisit finished steps. Locked steps open automatically once the required work is complete.
             </div>
+            {session?.moderation_notes?.length ? (
+              <div className="executive-review-note mt-4 px-4 py-4 text-sm leading-7">
+                <p className="executive-kicker">Content Review</p>
+                <div className="mt-2 space-y-2">
+                  {session.moderation_notes.map((note) => (
+                    <p key={note}>{note}</p>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </aside>
 
           <div className="min-w-0 space-y-6">
             {activeStep === "input" ? (
-              <section className="executive-panel p-6 md:p-8">
+              <section className="executive-panel executive-panel-stage executive-panel-input p-6 md:p-8">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="executive-kicker">Step 1</p>
@@ -1221,7 +1232,7 @@ export default function Home() {
                       Start with your story. Add roles, wins, industries, tools, strengths, and the kind of role you want next.
                     </p>
                   </div>
-                  <span className="rounded-full border border-[var(--executive-line)] bg-[var(--executive-accent-ghost)] px-3 py-1 text-sm text-[var(--executive-accent)]">
+                  <span className="executive-step-chip rounded-full border px-3 py-1 text-sm">
                     {getStageLabel()}
                   </span>
                 </div>
@@ -1258,8 +1269,8 @@ export default function Home() {
                     </div>
                     {error ? <p className="text-sm text-coral">{error}</p> : null}
                     {lastVoiceTranscript ? (
-                      <div className="rounded-[1.25rem] border border-[rgba(70,80,199,0.18)] bg-[#eef2ff] px-4 py-4 text-sm leading-7 text-[#3742b8]">
-                        <p className="executive-kicker text-[#4650c7]">Latest Transcript</p>
+                      <div className="executive-status-note px-4 py-4 text-sm leading-7">
+                        <p className="executive-kicker">Latest Transcript</p>
                         <p className="mt-2">{lastVoiceTranscript}</p>
                       </div>
                     ) : null}
@@ -1288,7 +1299,7 @@ export default function Home() {
             ) : null}
 
             {activeStep === "facts" ? (
-              <section className="executive-panel p-6 md:p-8">
+              <section className="executive-panel executive-panel-stage executive-panel-facts p-6 md:p-8">
                 <p className="executive-kicker">Step 2</p>
                 <h2 className="mt-2 text-3xl">Fact Extraction Review</h2>
                 <p className="mt-3 max-w-3xl text-base leading-8 text-[var(--executive-mute)]">
@@ -1313,7 +1324,7 @@ export default function Home() {
                       </button>
                     </div>
                     {hasUnsavedFactChanges ? (
-                      <p className="mt-4 rounded-[1rem] bg-[#fff0ea] px-4 py-3 text-sm leading-6 text-coral">
+                      <p className="executive-warning-note mt-4 px-4 py-3 text-sm leading-6">
                         Save or refresh your edits before moving forward.
                       </p>
                     ) : null}
@@ -1353,7 +1364,7 @@ export default function Home() {
             ) : null}
 
             {activeStep === "questions" ? (
-              <section className="executive-panel p-6 md:p-8">
+              <section className="executive-panel executive-panel-stage executive-panel-questions p-6 md:p-8">
                 <p className="executive-kicker">Step 3</p>
                 <h2 className="mt-2 text-3xl">Follow-Up Questions</h2>
                 <p className="mt-3 max-w-3xl text-base leading-8 text-[var(--executive-mute)]">
@@ -1402,7 +1413,7 @@ export default function Home() {
 
             {activeStep === "draft" ? (
               <section className="space-y-6">
-                <section className="executive-panel p-6 md:p-8">
+                <section className="executive-panel executive-panel-stage executive-panel-draft p-6 md:p-8">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="executive-kicker">Step 4</p>
@@ -1473,7 +1484,7 @@ export default function Home() {
                 </section>
 
                 {session?.review_result ? (
-                  <section className="executive-panel p-6 md:p-8">
+                  <section className="executive-panel executive-panel-stage executive-panel-final p-6 md:p-8">
                     <p className="executive-kicker">Final Pass</p>
                     <h3 className="mt-2 text-2xl">Apply Final Changes</h3>
                     <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_1fr]">
@@ -1509,7 +1520,7 @@ export default function Home() {
             ) : null}
 
             {activeStep === "export" ? (
-              <section className="executive-panel p-6 md:p-8">
+              <section className="executive-panel executive-panel-stage executive-panel-export p-6 md:p-8">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="executive-kicker">Step 5</p>
@@ -1549,7 +1560,7 @@ export default function Home() {
                   </button>
                 </div>
                 {hasUnsavedFactChanges ? (
-                  <p className="mt-4 rounded-[1rem] bg-[#fff0ea] px-4 py-3 text-sm leading-6 text-coral">
+                  <p className="executive-warning-note mt-4 px-4 py-3 text-sm leading-6">
                     Save or refresh your fact edits before building, reviewing, or exporting to keep the resume in sync.
                   </p>
                 ) : null}

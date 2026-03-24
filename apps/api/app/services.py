@@ -1,12 +1,16 @@
 import json
 import os
 import re
+from io import BytesIO
 from pathlib import Path
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from openai import OpenAI
 from dotenv import load_dotenv
 
 from .models import Question, ResumeDraft, ResumeFact, ReviewResult, SessionState
+from .safety import sanitize_answer_map, sanitize_facts, sanitize_markdown_output, sanitize_user_text
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -29,9 +33,11 @@ class ResumeAIReviewer:
         prompt = "\n\n".join(
             [
                 "Transcript:",
-                session.transcript or "No transcript available.",
+                sanitize_user_text(session.transcript or "No transcript available."),
                 "Current resume draft:",
-                session.resume_draft.markdown if session.resume_draft else "No draft available.",
+                sanitize_user_text(
+                    session.resume_draft.markdown if session.resume_draft else "No draft available."
+                ),
             ]
         )
         instructions = (
@@ -50,14 +56,15 @@ class ResumeAIReviewer:
         if not isinstance(notes, list) or not isinstance(markdown, str):
             return fallback
 
-        clean_notes = [str(note).strip() for note in notes if str(note).strip()]
+        clean_notes = [sanitize_user_text(str(note), max_length=160) for note in notes if str(note).strip()]
         if not clean_notes or not markdown.strip():
             return fallback
 
-        return ReviewResult(notes=clean_notes[:4], markdown=markdown.strip())
+        return ReviewResult(notes=clean_notes[:4], markdown=sanitize_markdown_output(markdown.strip()))
 
     def apply_revision(self, session: SessionState, change_request: str) -> ResumeDraft:
-        fallback = apply_revision_mock(session, change_request)
+        safe_change_request = sanitize_user_text(change_request)
+        fallback = apply_revision_mock(session, safe_change_request)
         if self._client is None:
             return fallback
 
@@ -71,11 +78,11 @@ class ResumeAIReviewer:
         prompt = "\n\n".join(
             [
                 "Transcript:",
-                session.transcript or "No transcript available.",
+                sanitize_user_text(session.transcript or "No transcript available."),
                 "Current reviewed resume:",
-                source_markdown,
+                sanitize_user_text(source_markdown),
                 "Requested changes:",
-                change_request.strip() or "No specific change request provided.",
+                safe_change_request or "No specific change request provided.",
             ]
         )
         instructions = (
@@ -91,11 +98,12 @@ class ResumeAIReviewer:
         if not isinstance(markdown, str) or not markdown.strip():
             return fallback
 
-        return ResumeDraft(markdown=markdown.strip())
+        return ResumeDraft(markdown=sanitize_markdown_output(markdown.strip()))
 
     def extract_facts(self, brain_dump: str) -> list[ResumeFact]:
-        fallback = extract_facts_mock(brain_dump)
-        if self._client is None or not brain_dump.strip():
+        safe_brain_dump = sanitize_user_text(brain_dump)
+        fallback = extract_facts_mock(safe_brain_dump)
+        if self._client is None or not safe_brain_dump.strip():
             return fallback
 
         instructions = (
@@ -104,7 +112,7 @@ class ResumeAIReviewer:
             "'facts' must be an array of objects with string keys 'label' and 'value'. "
             "Create 4 to 6 concise, resume-relevant facts."
         )
-        payload = self._create_json_response(brain_dump, instructions)
+        payload = self._create_json_response(safe_brain_dump, instructions)
         if payload is None:
             return fallback
 
@@ -121,7 +129,7 @@ class ResumeAIReviewer:
             if label and value:
                 cleaned.append(ResumeFact(label=label, value=value))
 
-        return cleaned or fallback
+        return sanitize_facts(cleaned or fallback)
 
     def generate_questions(self, session: SessionState) -> list[Question]:
         fallback = generate_questions_mock(session)
@@ -131,9 +139,9 @@ class ResumeAIReviewer:
         prompt = "\n\n".join(
             [
                 "Brain dump:",
-                session.brain_dump or "No brain dump provided.",
+                sanitize_user_text(session.brain_dump or "No brain dump provided."),
                 "Extracted facts:",
-                json.dumps([fact.model_dump() for fact in session.facts]),
+                json.dumps([fact.model_dump() for fact in sanitize_facts(session.facts)]),
             ]
         )
         instructions = (
@@ -167,12 +175,12 @@ class ResumeAIReviewer:
         if self._client is None:
             return fallback
 
-        facts_json = json.dumps([fact.model_dump() for fact in session.facts], ensure_ascii=True)
-        answers_json = json.dumps(session.answers, ensure_ascii=True)
+        facts_json = json.dumps([fact.model_dump() for fact in sanitize_facts(session.facts)], ensure_ascii=True)
+        answers_json = json.dumps(sanitize_answer_map(session.answers), ensure_ascii=True)
         prompt = "\n\n".join(
             [
                 "Brain dump:",
-                session.brain_dump or "No brain dump provided.",
+                sanitize_user_text(session.brain_dump or "No brain dump provided."),
                 "Extracted facts:",
                 facts_json,
                 "Follow-up questions:",
@@ -197,7 +205,79 @@ class ResumeAIReviewer:
         if not isinstance(markdown, str) or not markdown.strip():
             return fallback
 
-        return ResumeDraft(markdown=markdown.strip())
+        return ResumeDraft(markdown=sanitize_markdown_output(markdown.strip()))
+
+    def transcribe_audio(self, filename: str, content: bytes) -> str | None:
+        if self._client is None or not content:
+            return None
+
+        audio_file = BytesIO(content)
+        audio_file.name = filename
+
+        try:
+            response = self._client.audio.transcriptions.create(
+                model=os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"),
+                file=audio_file,
+            )
+        except Exception:
+            return None
+
+        text = getattr(response, "text", "")
+        cleaned = sanitize_user_text(text)
+        return cleaned or None
+
+    def create_realtime_transcription_token(self) -> dict[str, object] | None:
+        if not self.api_key:
+            return None
+
+        payload = {
+            "session": {
+                "type": "transcription",
+                "audio": {
+                    "input": {
+                        "format": {
+                            "type": "audio/pcm",
+                            "rate": 24000,
+                        },
+                        "transcription": {
+                            "model": os.getenv(
+                                "OPENAI_LIVE_TRANSCRIPTION_MODEL",
+                                "gpt-4o-mini-transcribe",
+                            ),
+                            "language": "en",
+                        },
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "silence_duration_ms": 500,
+                        },
+                    },
+                },
+                "include": [],
+            }
+        }
+        request = urllib_request.Request(
+            "https://api.openai.com/v1/realtime/client_secrets",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib_request.urlopen(request, timeout=30) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, json.JSONDecodeError):
+            return None
+
+        value = str(data.get("value", "")).strip()
+        expires_at = int(data.get("expires_at", 0) or 0)
+
+        if not value or not expires_at:
+            return None
+
+        return {"value": value, "expires_at": expires_at}
 
     def _create_json_response(self, prompt: str, instructions: str) -> dict[str, object] | None:
         if self._client is None:
@@ -227,7 +307,7 @@ reviewer = ResumeAIReviewer()
 
 
 def extract_facts_mock(brain_dump: str) -> list[ResumeFact]:
-    text = brain_dump.strip()
+    text = sanitize_user_text(brain_dump)
     if not text:
         return []
 
@@ -260,6 +340,14 @@ def build_resume(session: SessionState) -> ResumeDraft:
     return reviewer.build_resume(session)
 
 
+def transcribe_audio(filename: str, content: bytes) -> str | None:
+    return reviewer.transcribe_audio(filename, content)
+
+
+def create_realtime_transcription_token() -> dict[str, object] | None:
+    return reviewer.create_realtime_transcription_token()
+
+
 def build_resume_mock(session: SessionState) -> ResumeDraft:
     impact = _clean_sentence(
         session.answers.get("impact", "Delivered reliable results across daily operations.")
@@ -274,9 +362,10 @@ def build_resume_mock(session: SessionState) -> ResumeDraft:
     experience_title = _guess_experience_heading(session.brain_dump)
     summary = _build_summary(session, target, skills, fact_lines)
     additional_details = _build_additional_details(session, target, skills)
+    safe_answers = sanitize_answer_map(session.answers)
     extra_answers = [
         _clean_sentence(value)
-        for key, value in session.answers.items()
+        for key, value in safe_answers.items()
         if key not in {"impact", "tools", "target"} and value.strip()
     ]
 
@@ -302,21 +391,24 @@ def build_resume_mock(session: SessionState) -> ResumeDraft:
     if extra_answers:
         markdown += "\n" + "\n".join(f"- {answer}" for answer in extra_answers[:3])
 
-    return ResumeDraft(markdown=markdown)
+    return ResumeDraft(markdown=sanitize_markdown_output(markdown))
 
 
 def build_transcript(session: SessionState) -> str:
+    safe_brain_dump = sanitize_user_text(session.brain_dump)
+    safe_facts = sanitize_facts(session.facts)
+    safe_answers = sanitize_answer_map(session.answers)
     lines = [
         "# Session Transcript",
         "",
         "## Brain Dump",
-        session.brain_dump or "No brain dump provided.",
+        safe_brain_dump or "No brain dump provided.",
         "",
         "## Extracted Facts",
     ]
 
-    if session.facts:
-        for fact in session.facts:
+    if safe_facts:
+        for fact in safe_facts:
             lines.append(f"- {fact.label}: {fact.value}")
     else:
         lines.append("No extracted facts available.")
@@ -328,9 +420,9 @@ def build_transcript(session: SessionState) -> str:
         ]
     )
 
-    if session.answers:
+    if safe_answers:
         for question in session.questions:
-            answer = session.answers.get(question.id, "No answer provided.")
+            answer = safe_answers.get(question.id, "No answer provided.")
             lines.extend(
                 [
                     f"### {question.prompt}",
@@ -341,7 +433,7 @@ def build_transcript(session: SessionState) -> str:
     else:
         lines.append("No follow-up answers provided.")
 
-    return "\n".join(lines).strip()
+    return sanitize_user_text("\n".join(lines).strip())
 
 
 def review_resume_mock(session: SessionState) -> ReviewResult:
@@ -361,7 +453,10 @@ def review_resume_mock(session: SessionState) -> ReviewResult:
         f"Language tuned toward {target}.",
         "Kept the draft concise and ATS-friendly.",
     ]
-    return ReviewResult(notes=notes, markdown=reviewed)
+    return ReviewResult(
+        notes=[sanitize_user_text(note, max_length=160) for note in notes],
+        markdown=sanitize_markdown_output(reviewed),
+    )
 
 
 def apply_revision_mock(session: SessionState, change_request: str) -> ResumeDraft:
@@ -377,10 +472,10 @@ def apply_revision_mock(session: SessionState, change_request: str) -> ResumeDra
             source,
             "",
             "## Requested Changes Applied",
-            change_request.strip() or "No specific change request provided.",
+            sanitize_user_text(change_request.strip() or "No specific change request provided."),
         ]
     )
-    return ResumeDraft(markdown=revised)
+    return ResumeDraft(markdown=sanitize_markdown_output(revised))
 
 
 def review_resume(session: SessionState) -> ReviewResult:

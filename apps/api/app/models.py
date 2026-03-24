@@ -37,6 +37,7 @@ class SessionState(BaseModel):
     facts: list[ResumeFact] = Field(default_factory=list)
     questions: list[Question] = Field(default_factory=list)
     answers: dict[str, str] = Field(default_factory=dict)
+    moderation_notes: list[str] = Field(default_factory=list)
     resume_draft: ResumeDraft | None = None
     transcript: str = ""
     review_result: ReviewResult | None = None

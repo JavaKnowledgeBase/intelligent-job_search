@@ -11,8 +11,8 @@ const config: Config = {
         ink: "#162130",
         tide: "#e9f2f4",
         sand: "#f9f4ea",
-        coral: "#d96b43",
-        pine: "#26413c",
+        coral: "#b15d45",
+        pine: "#244a5d",
       },
     },
   },
@@ -20,4 +20,3 @@ const config: Config = {
 };
 
 export default config;
-

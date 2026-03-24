@@ -53,18 +53,18 @@ export function WelcomeOverlay({
   const typePanelHeight = isListening ? "34%" : "40%";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(8,14,28,0.62)] px-4 py-4 backdrop-blur-md">
-      <div className="welcome-panel relative flex h-[calc(100vh-1rem)] w-full max-w-[1280px] flex-col overflow-hidden rounded-[2rem] border border-white/45 bg-[linear-gradient(145deg,rgba(246,248,252,0.98),rgba(238,242,247,0.96))] shadow-[0_40px_120px_rgba(8,14,28,0.28)]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(9,19,32,0.58)] px-4 py-4 backdrop-blur-md">
+      <div className="welcome-panel relative flex h-[calc(100vh-1rem)] w-full max-w-[1280px] flex-col overflow-hidden rounded-[2rem] border border-white/45 bg-[linear-gradient(145deg,rgba(248,250,252,0.98),rgba(237,243,247,0.96))] shadow-[0_40px_120px_rgba(9,19,32,0.24)]">
         <div className="welcome-noise pointer-events-none absolute inset-0 opacity-60" />
         <div className="welcome-ambient welcome-ambient-a pointer-events-none absolute" />
         <div className="welcome-ambient welcome-ambient-b pointer-events-none absolute" />
 
         <div className="welcome-modal-scroll relative h-full p-3">
           <div className="grid h-full gap-3 xl:grid-cols-[34%_66%]">
-            <section className="welcome-dashboard-panel flex h-full min-h-0 flex-col p-4">
+            <section className="welcome-dashboard-panel flex h-full min-h-0 flex-col p-5">
               <div className="welcome-brand-header">
                 <div className="relative z-[2] shrink-0">
-                  <BrandLogo compact iconOnly />
+                  <BrandLogo compact />
                 </div>
                 <div className="welcome-brand-copy">
                   <p className="welcome-brand-eyebrow">Welcome</p>
@@ -72,14 +72,14 @@ export function WelcomeOverlay({
                 </div>
               </div>
 
-              <div className="mt-3.5">
+              <div className="mt-4">
                 <p className="text-[0.72rem] uppercase tracking-[0.22em] text-[var(--executive-mute)]">Guided Resume Workspace</p>
                 <p className="mt-2 text-[0.94rem] leading-6 text-ink/78">
                   Start by recording, typing, or uploading existing notes. We will extract facts, ask follow-up questions, and build the draft with you.
                 </p>
               </div>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-2">
+              <div className="mt-6 grid gap-4 md:grid-cols-2">
                 <button
                   type="button"
                   className="welcome-action-tile"
@@ -112,7 +112,7 @@ export function WelcomeOverlay({
                 </button>
               </div>
 
-              <div className="welcome-upload-card mt-5">
+              <div className="welcome-upload-card mt-6">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <p className="text-xs uppercase tracking-[0.18em] text-pine/65">Upload File</p>
                   <span className="welcome-badge">
@@ -135,6 +135,10 @@ export function WelcomeOverlay({
                   </p>
                 ) : null}
               </div>
+
+              <p className="mt-auto pt-6 text-xs uppercase tracking-[0.18em] text-[var(--executive-mute)]">
+                Developed by Ravi Kafley
+              </p>
             </section>
 
             <section className="welcome-dashboard-panel flex h-full min-h-0 flex-col overflow-hidden p-4">
@@ -169,7 +173,7 @@ export function WelcomeOverlay({
                     style={{ flexBasis: transcriptPanelHeight, flexGrow: 0, flexShrink: 0 }}
                   >
                     <div className="welcome-input-toolbar">
-                      <p className="text-[0.82rem] uppercase tracking-[0.2em] text-[#4b63b6]">
+                      <p className="welcome-section-label text-[0.82rem] uppercase tracking-[0.2em]">
                         Voice Transcript
                       </p>
                       <button
@@ -195,7 +199,7 @@ export function WelcomeOverlay({
                     style={{ flexBasis: typePanelHeight, flexGrow: 0, flexShrink: 0 }}
                   >
                     <div className="welcome-input-toolbar">
-                      <p className="text-[0.82rem] uppercase tracking-[0.2em] text-[#4b63b6]">
+                      <p className="welcome-section-label text-[0.82rem] uppercase tracking-[0.2em]">
                         Type Or Paste
                       </p>
                       <button
@@ -214,6 +218,10 @@ export function WelcomeOverlay({
                       onChange={(event) => onBrainDumpChange(event.target.value)}
                       placeholder="Type or paste your experience, roles, accomplishments, strengths, tools, and goals here."
                     />
+                  </div>
+
+                  <div className="welcome-status-card order-3">
+                    Information shared during this process is used only to prepare your resume. It is not stored for any other purpose and is cleared when you close your browser session.
                   </div>
                 </div>
               </div>

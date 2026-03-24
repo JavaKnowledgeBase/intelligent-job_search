@@ -7,6 +7,8 @@ apps/api/.venv
 __pycache__
 *.pyc
 .pytest_cache
+pytest-cache-files-*
+apps/api/pytest-cache-files-*
 .mypy_cache
 .tmp_*
 .tmp_*.zip
