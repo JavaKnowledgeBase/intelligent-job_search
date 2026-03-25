@@ -91,6 +91,99 @@ def test_full_resume_flow_supports_exports() -> None:
     assert len(export_docx.content) > 1000
 
 
+def test_resume_builder_preserves_and_expands_source_experience_lines() -> None:
+    session = create_session()
+    session_id = session["session_id"]
+
+    intake = client.post(
+        f"/sessions/{session_id}/intake",
+        json={
+            "brain_dump": (
+                "I have 14 years of experience in operations, support, and coordination roles. "
+                "I worked in customer support and back-office operations. "
+                "I used Excel, CRM tools, and ticketing systems. "
+                "I kept customers updated and improved workflows. "
+                "I supported cross-functional teams and handled daily issue resolution."
+            )
+        },
+    )
+    assert intake.status_code == 200
+
+    client.post(f"/sessions/{session_id}/questions")
+    client.post(
+        f"/sessions/{session_id}/answers",
+        json={
+            "answers": {
+                "impact": "Reduced response times and improved team handoffs",
+                "tools": "Excel, CRM, ticketing systems",
+                "target": "operations coordinator",
+            }
+        },
+    )
+
+    resume = client.post(f"/sessions/{session_id}/resume")
+    assert resume.status_code == 200
+    markdown = resume.json()["resume_draft"]["markdown"]
+
+    assert "14 years of experience" in markdown
+    assert "Built experience across customer support and back-office operations." in markdown
+    assert "Utilized Excel, CRM tools, and ticketing systems." in markdown
+    assert "Kept customers updated and improved workflows." in markdown
+    assert markdown.count("\n- ") >= 8
+
+
+def test_resume_builder_preserves_existing_resume_roles_and_rewrites_bullets() -> None:
+    session = create_session()
+    session_id = session["session_id"]
+
+    source_resume = "\n".join(
+        [
+            "Sample Candidate",
+            "Example City, ST",
+            "Email: candidate@example.test | Phone: 000-000-0000",
+            "PROFESSIONAL SUMMARY",
+            "Senior Full Stack Application Developer with over 14 years of experience delivering enterprise-grade software solutions for state and government agencies as well as commercial organizations.",
+            "CORE COMPETENCIES",
+            "• Full Stack Java Development",
+            "• Government & Public Sector Systems",
+            "TECHNICAL SKILLS",
+            "Programming Languages: Java, Java EE, JavaScript",
+            "Frameworks: Spring, ReactJS, Struts",
+            "PROFESSIONAL EXPERIENCE",
+            "Public Sector Agency – Austin, TX",
+            "Full Stack Developer | May 2017 – Present",
+            "Led modernization of monolith legacy Struts applications into Microservice Components using Spring backend, React frontend and relevant frameworks.",
+            "Provided production support and emergency fixes.",
+            "State Services Department – Austin, TX",
+            "Senior Developer / System Analyst V | Jan 2015 – Apr 2017",
+            "Developed APIs for inter-agency data exchange.",
+            "Conducted secure code reviews and performance tuning.",
+            "EDUCATION",
+            "Master of Business Studies – 2009",
+        ]
+    )
+
+    intake = client.post(
+        f"/sessions/{session_id}/intake",
+        json={"brain_dump": source_resume},
+    )
+    assert intake.status_code == 200
+
+    client.post(f"/sessions/{session_id}/questions")
+    resume = client.post(f"/sessions/{session_id}/resume")
+    assert resume.status_code == 200
+    markdown = resume.json()["resume_draft"]["markdown"]
+
+    assert "# Sample Candidate" in markdown
+    assert "## Professional Experience" in markdown
+    assert "### Public Sector Agency" in markdown
+    assert "*Full Stack Developer | May 2017" in markdown
+    assert "Modernized" in markdown
+    assert "Spring backend, React frontend and relevant frameworks." in markdown
+    assert "issue triage" in markdown
+    assert "### State Services Department" in markdown
+
+
 def test_updating_facts_clears_generated_outputs() -> None:
     session = create_session()
     session_id = session["session_id"]

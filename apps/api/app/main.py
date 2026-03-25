@@ -22,6 +22,7 @@ from .services import (
     apply_revision,
     build_resume,
     build_transcript,
+    claude_build_resume,
     create_realtime_transcription_token,
     extract_facts,
     generate_questions,
@@ -58,7 +59,11 @@ def require_session(session_id: str) -> SessionState:
     return session
 
 
-def get_resume_markdown(session: SessionState) -> str:
+def get_resume_markdown(session: SessionState, version: str = "default") -> str:
+    if version == "claude":
+        if session.claude_resume is not None:
+            return sanitize_markdown_output(session.claude_resume.markdown)
+        raise HTTPException(status_code=400, detail="Claude version has not been generated yet")
     if session.final_resume is not None:
         return sanitize_markdown_output(session.final_resume.markdown)
     if session.review_result is not None:
@@ -215,6 +220,13 @@ def resume(session_id: str) -> SessionState:
     return store.save(session)
 
 
+@app.post("/sessions/{session_id}/resume/claude", response_model=SessionState)
+def resume_claude(session_id: str) -> SessionState:
+    session = require_session(session_id)
+    session.claude_resume = ResumeDraft(markdown=sanitize_markdown_output(claude_build_resume(session).markdown))
+    return store.save(session)
+
+
 @app.post("/sessions/{session_id}/resume-draft", response_model=SessionState)
 def update_resume_draft(session_id: str, payload: ResumeDraftUpdateRequest) -> SessionState:
     session = require_session(session_id)
@@ -248,13 +260,14 @@ def finalize(session_id: str, payload: RevisionRequest) -> SessionState:
 
 
 @app.get("/sessions/{session_id}/export/docx")
-def export_docx(session_id: str, template: str = "professional") -> StreamingResponse:
+def export_docx(session_id: str, template: str = "professional", version: str = "default") -> StreamingResponse:
     session = require_session(session_id)
-    content = markdown_to_docx(get_resume_markdown(session), template=template)
+    content = markdown_to_docx(get_resume_markdown(session, version=version), template=template)
+    filename = "resume-claude.docx" if version == "claude" else "resume-output.docx"
     return StreamingResponse(
         BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": 'attachment; filename="resume-output.docx"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -281,11 +294,12 @@ def export_json(session_id: str) -> JSONResponse:
 
 
 @app.get("/sessions/{session_id}/export/pdf")
-def export_pdf(session_id: str, template: str = "professional") -> StreamingResponse:
+def export_pdf(session_id: str, template: str = "professional", version: str = "default") -> StreamingResponse:
     session = require_session(session_id)
-    content = markdown_to_pdf(get_resume_markdown(session), template=template)
+    content = markdown_to_pdf(get_resume_markdown(session, version=version), template=template)
+    filename = "resume-claude.pdf" if version == "claude" else "resume-output.pdf"
     return StreamingResponse(
         BytesIO(content),
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="resume-output.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

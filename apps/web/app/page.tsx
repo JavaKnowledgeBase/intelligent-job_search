@@ -25,6 +25,7 @@ type SessionState = {
   transcript: string;
   review_result: { notes: string[]; markdown: string } | null;
   final_resume: { markdown: string } | null;
+  claude_resume: { markdown: string } | null;
   expires_at?: string;
 };
 
@@ -70,6 +71,8 @@ export default function Home() {
   const [changeRequest, setChangeRequest] = useState("");
   const [exportTemplate, setExportTemplate] = useState<ExportTemplate>("professional");
   const [loading, setLoading] = useState(false);
+  const [claudeLoading, setClaudeLoading] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<"openai" | "claude">("openai");
   const [error, setError] = useState("");
   const [sessionReady, setSessionReady] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
@@ -770,6 +773,63 @@ export default function Home() {
     }
   }
 
+  async function generateClaudeResume() {
+    if (!session) {
+      return;
+    }
+
+    setClaudeLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE}/sessions/${session.session_id}/resume/claude`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to generate Claude version.");
+      }
+
+      const data = (await response.json()) as SessionState;
+      setSession(data);
+      setWorkspaceTab("claude");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate Claude version.");
+    } finally {
+      setClaudeLoading(false);
+    }
+  }
+
+  async function downloadClaudeResumeFile(format: "pdf" | "docx") {
+    if (!session?.session_id) {
+      setError("Start a session before exporting.");
+      return;
+    }
+
+    try {
+      setError("");
+      const response = await fetch(
+        `${API_BASE}/sessions/${session.session_id}/export/${format}?version=claude&template=${exportTemplate}`,
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to export Claude resume as ${format.toUpperCase()}.`);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `resume-claude.${format}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      celebrateDownload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export Claude resume.");
+    }
+  }
+
   async function finalizeResume(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!session) {
@@ -1005,6 +1065,12 @@ export default function Home() {
     setBrainDump("");
   }
 
+  function clearUploadedFile() {
+    setUploadedFileName("");
+    setUploadedFileText("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   function handleVoiceTranscriptChange(value: string) {
     setLastVoiceTranscript(value);
     completedTranscriptRef.current = value.trim() ? [value.trim()] : [];
@@ -1047,31 +1113,35 @@ export default function Home() {
   }
 
   function getWorkspaceTranscriptPreview() {
-    if (!uploadedFileName) {
-      return session?.transcript || "";
+    const lines: string[] = ["Intake Sources", ""];
+
+    if (uploadedFileName) {
+      lines.push(`📄 Uploaded file: ${uploadedFileName}`);
+    }
+    if (brainDump.trim()) {
+      lines.push("✏️  Typed / pasted notes: included");
+    }
+    if (lastVoiceTranscript.trim()) {
+      lines.push("🎙  Voice transcript: included");
     }
 
-    const lines = [
-      "# Source Notes",
-      "",
-      "## Intake Sources",
-      `- Uploaded resume: ${uploadedFileName}`,
-      `- Typed notes included: ${brainDump.trim() ? "Yes" : "No"}`,
-      `- Voice notes included: ${lastVoiceTranscript.trim() ? "Yes" : "No"}`,
-    ];
+    if (!uploadedFileName && !brainDump.trim() && !lastVoiceTranscript.trim()) {
+      return "";
+    }
 
     if (session?.facts.length) {
-      lines.push("", "## Extracted Facts");
+      lines.push("", "Extracted Facts");
       for (const fact of session.facts) {
-        lines.push(`- ${fact.label}: ${fact.value}`);
+        lines.push(`• ${fact.label}: ${fact.value}`);
       }
     }
 
     if (session?.questions.length) {
-      lines.push("", "## Follow-Up Answers");
+      lines.push("", "Follow-Up Answers");
       for (const question of session.questions) {
-        lines.push(`### ${question.prompt}`);
-        lines.push(answers[question.id] || "No answer provided.");
+        const answer = answers[question.id];
+        lines.push(`Q: ${question.prompt}`);
+        lines.push(`A: ${answer || "No answer provided."}`);
         lines.push("");
       }
     }
@@ -1155,6 +1225,7 @@ export default function Home() {
         onVoiceTranscriptChange={handleVoiceTranscriptChange}
         onClearBrainDump={clearTypedInput}
         onClearVoiceTranscript={clearVoiceTranscript}
+        onClearUpload={clearUploadedFile}
         onUploadClick={beginFileSelection}
         onVoiceStart={startVoiceCapture}
         onVoiceStop={stopVoiceCapture}
@@ -1167,50 +1238,113 @@ export default function Home() {
       {showDraftWorkspace ? (
         <main className="mx-auto flex h-screen w-full max-w-[1600px] flex-col p-4">
           <section className="grid h-full min-h-0 gap-4 xl:grid-cols-[40%_60%]">
-            <aside className="executive-panel executive-panel-stage executive-panel-support flex min-h-0 flex-col overflow-hidden p-6">
-              <div className="shrink-0">
+            <aside className="iridescent-panel flex min-h-0 flex-col overflow-hidden p-6">
+
+              {/* Header */}
+              <div className="shrink-0 border-b border-[var(--executive-line)] pb-5">
                 <BrandLogo compact />
-                <h1 className="executive-display mt-4 text-[2rem] leading-[0.95] text-ink md:text-[2.55rem]">
-                  Your Resume Upgrade Workspace
-                </h1>
-                <p className="mt-2 max-w-xl text-[0.97rem] leading-7 text-[var(--executive-mute)]">
-                  Review the draft, make final refinements, and export with confidence.
-                </p>
+                <p className="mt-4 text-xs uppercase tracking-[0.3em] text-[var(--executive-mute)]">Resume Upgrade Workspace</p>
               </div>
 
-              <div className="mt-5 grid shrink-0 gap-3 md:grid-cols-3">
+              {/* Specialist Cards */}
+              <div className="mt-5 shrink-0 space-y-3">
+
+                {/* Specialist 1 */}
+                <div className="rounded-[1.35rem] border border-[var(--executive-line)] bg-white p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-pine">Resume Specialist 1</p>
+                    <span className="flex items-center gap-1.5 text-xs text-[var(--executive-mute)]">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      Ready
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="gold-button w-full text-sm"
+                      disabled={!canExportResume || loading || savingResume}
+                      onClick={() => void downloadResumeFile("pdf")}
+                    >
+                      Download PDF
+                    </button>
+                    <button
+                      type="button"
+                      className="executive-secondary-button w-full text-sm"
+                      disabled={!canExportResume || loading || savingResume}
+                      onClick={() => void downloadResumeFile("docx")}
+                    >
+                      Download DOCX
+                    </button>
+                  </div>
+                </div>
+
+                {/* Specialist 2 */}
+                <div className="rounded-[1.35rem] border border-[var(--executive-line)] bg-white p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-pine">Resume Specialist 2</p>
+                    <span className="flex items-center gap-1.5 text-xs text-[var(--executive-mute)]">
+                      <span className={`inline-block h-1.5 w-1.5 rounded-full ${session?.claude_resume ? "bg-emerald-400" : "bg-[var(--executive-line)]"}`} />
+                      {claudeLoading ? "Generating..." : session?.claude_resume ? "Ready" : "Not generated"}
+                    </span>
+                  </div>
+                  {session?.claude_resume ? (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        className="gold-button w-full text-sm"
+                        onClick={() => void downloadClaudeResumeFile("pdf")}
+                      >
+                        Download PDF
+                      </button>
+                      <button
+                        type="button"
+                        className="executive-secondary-button w-full text-sm"
+                        onClick={() => void downloadClaudeResumeFile("docx")}
+                      >
+                        Download DOCX
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="executive-secondary-button mt-3 w-full text-sm"
+                      disabled={claudeLoading || !canExportResume}
+                      onClick={() => void generateClaudeResume()}
+                    >
+                      {claudeLoading ? "Generating..." : "Generate Second Version"}
+                    </button>
+                  )}
+                  {session?.claude_resume ? (
+                    <button
+                      type="button"
+                      className="mt-2 w-full rounded-xl border border-[var(--executive-line)] bg-transparent px-3 py-1.5 text-xs text-[var(--executive-mute)] transition hover:bg-[var(--executive-soft)]"
+                      disabled={claudeLoading}
+                      onClick={() => void generateClaudeResume()}
+                    >
+                      Regenerate
+                    </button>
+                  ) : null}
+                </div>
+
+              </div>
+
+              {/* Utility row */}
+              <div className="mt-3 shrink-0">
                 <button
                   type="button"
-                  className="executive-primary-button w-full"
-                  disabled={!canExportResume || loading || savingResume}
-                  onClick={() => void downloadResumeFile("pdf")}
-                >
-                  Download PDF
-                </button>
-                <button
-                  type="button"
-                  className="executive-secondary-button w-full"
-                  disabled={!canExportResume || loading || savingResume}
-                  onClick={() => void downloadResumeFile("docx")}
-                >
-                  Download DOCX
-                </button>
-                <button
-                  type="button"
-                  className="executive-secondary-button w-full"
+                  className="executive-secondary-button w-full text-sm"
                   disabled={!session?.transcript}
                   onClick={() => downloadTextFile("session-transcript.md", session?.transcript ?? "")}
                 >
-                  Download Transcript
+                  Download Source Transcript
                 </button>
               </div>
 
-              <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-[1.4rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-4">
+              {/* Transcript */}
+              <div className="mt-4 min-h-0 flex-1 overflow-hidden rounded-[1.4rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="executive-kicker">Transcript</p>
-                  <span className="text-xs uppercase tracking-[0.2em] text-[var(--executive-mute)]">
-                    Source Notes
-                  </span>
+                  <p className="executive-kicker">Source Notes</p>
+                  <span className="text-xs uppercase tracking-[0.2em] text-[var(--executive-mute)]">Transcript</span>
                 </div>
                 <div className="mt-3 h-[calc(100%-2rem)] overflow-auto rounded-[1.1rem] border border-[var(--executive-line)] bg-white/80 p-4 text-sm leading-7 text-[var(--executive-mute)]">
                   {getWorkspaceTranscriptPreview() ? (
@@ -1222,15 +1356,34 @@ export default function Home() {
                   )}
                 </div>
               </div>
+
             </aside>
 
-            <section className="executive-panel executive-panel-stage executive-panel-support flex min-h-0 flex-col overflow-hidden p-5 md:p-6">
+            <section className="workspace-document-panel flex min-h-0 flex-col overflow-hidden p-5 md:p-6">
               <div className="flex shrink-0 items-start justify-between gap-4">
                 <div>
-                  <p className="executive-kicker">Editable Resume</p>
-                  <h2 className="mt-2 text-2xl md:text-3xl">Review And Refine</h2>
+                  <p className="executive-kicker">{workspaceTab === "claude" ? "Resume Specialist 2" : "Resume Specialist 1"}</p>
+                  <h2 className="mt-2 text-2xl md:text-3xl">{workspaceTab === "claude" ? "Second Draft" : "First Draft"}</h2>
                 </div>
                 <div className="flex flex-wrap gap-3">
+                  {session?.claude_resume ? (
+                    <div className="flex rounded-full border border-[var(--executive-line)] bg-[var(--executive-soft)] p-1">
+                      <button
+                        type="button"
+                        className={`rounded-full px-4 py-1.5 text-sm transition ${workspaceTab === "openai" ? "bg-white shadow-sm font-semibold text-ink" : "text-[var(--executive-mute)]"}`}
+                        onClick={() => setWorkspaceTab("openai")}
+                      >
+                        Specialist 1
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-full px-4 py-1.5 text-sm transition ${workspaceTab === "claude" ? "bg-white shadow-sm font-semibold text-ink" : "text-[var(--executive-mute)]"}`}
+                        onClick={() => setWorkspaceTab("claude")}
+                      >
+                        Specialist 2
+                      </button>
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     className="executive-secondary-button"
@@ -1238,26 +1391,24 @@ export default function Home() {
                   >
                     Back To Intake
                   </button>
-                  <button
-                    type="button"
-                    className="executive-primary-button"
-                    disabled={!hasUnsavedResumeChanges || savingResume}
-                    onClick={() => void saveEditedResumeDraft()}
-                  >
-                    {savingResume ? "Saving..." : "Save Resume"}
-                  </button>
                 </div>
               </div>
 
               {error ? <p className="mt-4 text-sm text-coral">{error}</p> : null}
 
               <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-[1.6rem] border border-[rgba(19,32,51,0.08)] bg-[linear-gradient(180deg,#ffffff_0%,#f4f8fb_100%)] p-4 md:p-6">
-                <textarea
-                  className="h-full w-full resize-none overflow-auto rounded-[1.25rem] border border-[rgba(24,36,53,0.08)] bg-white px-6 py-6 font-['Georgia'] text-[15px] leading-7 text-ink outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
-                  value={editableResumeMarkdown}
-                  onChange={(event) => setEditableResumeMarkdown(event.target.value)}
-                  onBlur={() => void saveEditedResumeDraft()}
-                />
+                {workspaceTab === "claude" && session?.claude_resume ? (
+                  <pre className="h-full w-full overflow-auto rounded-[1.25rem] border border-[rgba(24,36,53,0.08)] bg-white px-6 py-6 font-['Georgia'] text-[15px] leading-7 text-ink whitespace-pre-wrap">
+                    {session.claude_resume.markdown}
+                  </pre>
+                ) : (
+                  <textarea
+                    className="h-full w-full resize-none overflow-auto rounded-[1.25rem] border border-[rgba(24,36,53,0.08)] bg-white px-6 py-6 font-['Georgia'] text-[15px] leading-7 text-ink outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
+                    value={editableResumeMarkdown}
+                    onChange={(event) => setEditableResumeMarkdown(event.target.value)}
+                    onBlur={() => void saveEditedResumeDraft()}
+                  />
+                )}
               </div>
             </section>
           </section>
@@ -1267,60 +1418,67 @@ export default function Home() {
         <section className="executive-hero relative overflow-hidden rounded-[2.2rem] border border-white/10 p-8 shadow-[0_30px_110px_rgba(11,19,34,0.24)] md:p-10">
         <div className="executive-orbit executive-orbit-a" />
         <div className="executive-orbit executive-orbit-b" />
-        <div className="relative grid gap-8 md:grid-cols-[1.3fr_0.9fr]">
-        <div className="min-w-0 space-y-6">
+        <div className="relative grid gap-8 md:grid-cols-[1.4fr_0.85fr]">
+        <div className="min-w-0 space-y-5">
           <BrandLogo />
-          <p className="text-sm uppercase tracking-[0.35em] text-[var(--executive-bg-strong)]">Your Resume Upgrade Workspace</p>
-          <h1 className="executive-display max-w-4xl text-4xl leading-[1.02] text-white md:text-6xl">
-            Transform a rough career story into a boardroom-ready resume.
+          <div className="flex items-center gap-3">
+            <span className="privacy-shield">
+              <span className="privacy-shield-dot" />
+              Zero data retention
+            </span>
+            <span className="privacy-shield">
+              <span className="privacy-shield-dot" />
+              Session auto-clears
+            </span>
+          </div>
+          <h1 className="executive-display max-w-4xl text-4xl leading-[1.02] text-white md:text-[3.6rem]">
+            Every detail you share becomes a professional resume.
           </h1>
           <p className="max-w-3xl text-lg leading-8 text-white/76">
-            A premium drafting workspace for capturing experience, refining facts,
-            answering strategic follow-up questions, and exporting a polished final result.
+            Works for every profession — from software engineers and nurses to electricians,
+            teachers, lawyers, and chefs. Your full career story, captured and elevated.
           </p>
-          <div className="max-w-3xl rounded-[1.6rem] border border-white/10 bg-white/8 px-5 py-4 text-base leading-7 text-white/74 backdrop-blur-sm">
-            Start with the concierge welcome, bring in your story by text, upload, or voice,
-            then move through extraction, review, refinement, and export in a single guided flow.
-          </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="executive-metric">
-              <strong>Capture</strong>
-              <span>Type, upload, or dictate your experience in the format that feels easiest.</span>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="hero-stat">
+              <strong>3</strong>
+              <span>Input methods</span>
             </div>
-            <div className="executive-metric">
-              <strong>Refine</strong>
-              <span>Review extracted facts and answer targeted questions before drafting.</span>
+            <div className="hero-stat">
+              <strong>2</strong>
+              <span>AI specialists</span>
             </div>
-            <div className="executive-metric">
-              <strong>Deliver</strong>
-              <span>Export a professional final resume in Markdown, JSON, DOCX, or PDF.</span>
+            <div className="hero-stat">
+              <strong>4</strong>
+              <span>Export formats</span>
+            </div>
+            <div className="hero-stat">
+              <strong>0</strong>
+              <span>Data stored</span>
             </div>
           </div>
         </div>
 
         <div className="executive-sidebar min-w-0 rounded-[1.75rem] border border-white/10 bg-white/6 p-6 text-white backdrop-blur-sm">
-          <p className="text-sm uppercase tracking-[0.25em] text-[var(--executive-bg-strong)]">
-            Executive Session
-          </p>
-          <p className="mt-4 text-2xl leading-9">
-            Private by default. Focused on clarity, speed, and professional output.
-          </p>
-          <p className="mt-4 text-sm leading-7 text-white/72">
-            {formatExpiry(session?.expires_at)}
-          </p>
-          <div className="mt-6 grid gap-3">
-            <div className="rounded-[1.2rem] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-7 text-white/72">
-              {hasUnsavedFactChanges
-                ? "Fact edits need to be synced before final drafting and export."
-                : "The workspace is aligned and ready for the next step."}
-            </div>
-            <div className="rounded-[1.2rem] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-7 text-white/72">
-              No account is required, and the session is designed to remain temporary.
-            </div>
-            <div className="rounded-[1.2rem] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-7 text-white/72">
-              Workflow: intake, facts, questions, review, then export.
-            </div>
+          <p className="text-xs uppercase tracking-[0.28em] text-white/50">How it works</p>
+          <div className="mt-4 space-y-3">
+            {[
+              { n: "01", label: "Share your story", desc: "Type, upload a file, or speak — any format, any profession." },
+              { n: "02", label: "Review & refine", desc: "Edit AI-extracted facts and answer a few targeted questions." },
+              { n: "03", label: "Get two drafts", desc: "Two independent AI specialists each produce a full resume." },
+              { n: "04", label: "Export & apply", desc: "Download as PDF, DOCX, Markdown, or JSON instantly." },
+            ].map((step) => (
+              <div key={step.n} className="flex gap-3 rounded-[1.15rem] border border-white/10 bg-white/5 px-4 py-3">
+                <span className="mt-0.5 text-xs font-bold text-white/40">{step.n}</span>
+                <div>
+                  <p className="text-sm font-semibold text-white/90">{step.label}</p>
+                  <p className="mt-0.5 text-xs leading-5 text-white/56">{step.desc}</p>
+                </div>
+              </div>
+            ))}
           </div>
+          <p className="mt-4 text-xs leading-6 text-white/44">
+            {formatExpiry(session?.expires_at)} · No account required
+          </p>
         </div>
         </div>
         </section>
@@ -1329,38 +1487,47 @@ export default function Home() {
           <aside className="executive-panel executive-panel-stage executive-panel-progress h-fit p-4 md:sticky md:top-6">
             <p className="executive-kicker">Workflow</p>
             <h2 className="mt-2 text-2xl">Progress</h2>
-            <div className="mt-5 space-y-3">
-              {flowSteps.map((step) => {
+            <div className="mt-5 space-y-2">
+              {flowSteps.map((step, idx) => {
                 const isActive = activeStep === step.id;
+                const isDone = step.enabled && !isActive && idx < flowSteps.findIndex((s) => s.id === activeStep);
+                const dotClass = isDone
+                  ? "step-status-dot step-status-dot--done"
+                  : isActive
+                  ? "step-status-dot step-status-dot--active"
+                  : "step-status-dot step-status-dot--locked";
                 return (
                   <button
                     key={step.id}
                     type="button"
-                    className={`w-full rounded-[1.35rem] border px-4 py-4 text-left transition ${
+                    className={`w-full rounded-[1.2rem] border px-4 py-3.5 text-left transition ${
                       isActive
-                        ? "border-[var(--executive-accent)] bg-[var(--executive-accent-ghost)] shadow-[0_16px_32px_rgba(159,122,57,0.08)]"
-                        : "border-[var(--executive-line)] bg-white"
-                    } ${step.enabled ? "opacity-100" : "opacity-55"}`}
+                        ? "border-[rgba(28,107,132,0.3)] bg-[rgba(28,107,132,0.05)] shadow-[0_8px_24px_rgba(28,107,132,0.08)]"
+                        : "border-[var(--executive-line)] bg-white hover:bg-[var(--executive-soft)]"
+                    } ${step.enabled ? "opacity-100" : "opacity-45"}`}
                     disabled={!step.enabled}
                     onClick={() => setActiveStep(step.id)}
                   >
                     <div className="flex items-center gap-3">
-                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--executive-soft)] text-sm font-semibold text-pine">
-                        {step.label}
-                      </span>
-                      <div>
-                        <p className="text-base font-semibold text-ink">{step.title}</p>
-                        <p className="mt-1 text-sm leading-6 text-[var(--executive-mute)]">
+                      <span className={dotClass} />
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-sm font-semibold ${isActive ? "text-[#1c6b84]" : "text-ink"}`}>{step.title}</p>
+                        <p className="mt-0.5 truncate text-xs leading-5 text-[var(--executive-mute)]">
                           {step.description}
                         </p>
                       </div>
+                      {isDone ? (
+                        <svg className="h-4 w-4 shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414L8.414 15l-4.121-4.121a1 1 0 011.414-1.414L8.414 12.172l6.879-6.879a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : null}
                     </div>
                   </button>
                 );
               })}
             </div>
-            <div className="mt-5 rounded-[1.35rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] px-4 py-4 text-sm leading-7 text-[var(--executive-mute)]">
-              Use the sidebar to revisit finished steps. Locked steps open automatically once the required work is complete.
+            <div className="mt-4 rounded-[1.2rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] px-4 py-3 text-xs leading-6 text-[var(--executive-mute)]">
+              <span className="font-semibold text-ink">Privacy guarantee:</span> nothing you share is stored after your session ends. All data is cleared automatically.
             </div>
             {session?.moderation_notes?.length ? (
               <div className="executive-review-note mt-4 px-4 py-4 text-sm leading-7">
@@ -1443,7 +1610,9 @@ export default function Home() {
                         Reopen Welcome Guide
                       </button>
                       <p className="mt-3 text-sm leading-7 text-[var(--executive-mute)]">
-                        {speechSupported ? voiceStatus || "Voice dictation is available in this browser." : "Voice dictation is not supported in this browser."}
+                        {speechSupported
+                          ? voiceStatus || "Voice dictation is available in this browser."
+                          : "Voice dictation requires HTTPS or localhost access in this browser."}
                       </p>
                     </div>
                   </div>
@@ -1481,26 +1650,32 @@ export default function Home() {
                         Save or refresh your edits before moving forward.
                       </p>
                     ) : null}
-                    <div className="mt-6 grid gap-3">
+                    <div className="mt-6 grid gap-3 md:grid-cols-2">
                       {editableFacts.map((fact, index) => (
-                        <div key={`${index}-${fact.label}`} className="rounded-[1.35rem] border border-[var(--executive-line)] bg-white px-4 py-4">
-                          <div className="grid gap-3 md:grid-cols-[0.35fr_1fr_auto]">
+                        <div key={index} className="fact-card flex flex-col gap-2">
+                          <div className="flex items-center justify-between gap-2">
                             <input
-                              className="executive-input"
+                              type="text"
+                              className="executive-input flex-1 py-2 text-xs"
                               value={fact.label}
                               onChange={(event) => updateFact(index, "label", event.target.value)}
-                              placeholder="Label"
+                              placeholder="Label (e.g. Core Skill)"
                             />
-                            <textarea
-                              className="executive-textarea min-h-24"
-                              value={fact.value}
-                              onChange={(event) => updateFact(index, "value", event.target.value)}
-                              placeholder="Fact value"
-                            />
-                            <button type="button" className="executive-ghost-button" onClick={() => removeFact(index)}>
-                              Remove
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-full border border-[var(--executive-line)] bg-white px-3 py-1.5 text-xs text-[var(--executive-mute)] transition hover:border-red-200 hover:text-red-500"
+                              onClick={() => removeFact(index)}
+                            >
+                              ✕
                             </button>
                           </div>
+                          <input
+                            type="text"
+                            className="executive-input w-full py-2 text-sm"
+                            value={fact.value}
+                            onChange={(event) => updateFact(index, "value", event.target.value)}
+                            placeholder="Detail or value"
+                          />
                         </div>
                       ))}
                     </div>
@@ -1525,15 +1700,16 @@ export default function Home() {
                 </p>
                 {session?.questions.length ? (
                   <form className="mt-6 space-y-4" onSubmit={buildResume}>
-                    {session.questions.map((question) => (
-                      <label
-                        key={question.id}
-                        className="block rounded-[1.35rem] border border-[var(--executive-line)] bg-[var(--executive-soft)] p-4"
-                      >
-                        <span className="block leading-7 text-pine">{question.prompt}</span>
+                    {session.questions.map((question, idx) => (
+                      <div key={question.id} className="question-card">
+                        <div className="flex items-start gap-3">
+                          <span className="question-number mt-0.5">{idx + 1}</span>
+                          <p className="text-base leading-7 text-ink">{question.prompt}</p>
+                        </div>
                         <textarea
-                          className="executive-textarea mt-3 min-h-28 w-full"
+                          className="executive-textarea mt-4 min-h-28 w-full"
                           value={answers[question.id] ?? ""}
+                          placeholder="Your answer — be specific. Numbers, names, tools, and outcomes all help."
                           onChange={(event) =>
                             setAnswers((current) => ({
                               ...current,
@@ -1541,7 +1717,7 @@ export default function Home() {
                             }))
                           }
                         />
-                      </label>
+                      </div>
                     ))}
                     <div className="flex flex-wrap gap-3">
                       <button type="button" className="executive-secondary-button" onClick={() => setActiveStep("facts")}>
@@ -1595,12 +1771,20 @@ export default function Home() {
                       >
                         Review Draft
                       </button>
+                      <button
+                        type="button"
+                        className="executive-secondary-button"
+                        disabled={claudeLoading || !session?.resume_draft || hasUnsavedFactChanges}
+                        onClick={() => void generateClaudeResume()}
+                      >
+                        {claudeLoading ? "Generating..." : session?.claude_resume ? "Regenerate Claude Version" : "Get Claude Version"}
+                      </button>
                     </div>
                   </div>
                   <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
                     <div>
                       <p className="executive-kicker">Resume Preview</p>
-                      <pre className="executive-code-block mt-3 min-h-[420px]">
+                      <pre className="resume-preview mt-3 min-h-[420px]">
                         {resumeMarkdown || "Your resume draft will appear here after you answer the follow-up questions."}
                       </pre>
                     </div>
@@ -1636,12 +1820,52 @@ export default function Home() {
                   </div>
                 </section>
 
+                {session?.claude_resume ? (
+                  <section className="executive-panel executive-panel-stage p-6 md:p-8" style={{ borderColor: "var(--executive-accent)", background: "var(--executive-accent-ghost)" }}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="executive-kicker" style={{ color: "var(--executive-accent)" }}>Claude Version</p>
+                        <h3 className="mt-2 text-2xl">Second Opinion From Claude</h3>
+                        <p className="mt-2 text-sm leading-7 text-[var(--executive-mute)]">
+                          An independent resume draft generated by Claude — different voice, same source material.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          className="executive-secondary-button"
+                          onClick={() => downloadTextFile("resume-claude.md", session.claude_resume?.markdown ?? "")}
+                        >
+                          Download Markdown
+                        </button>
+                        <button
+                          type="button"
+                          className="executive-secondary-button"
+                          onClick={() => void downloadClaudeResumeFile("docx")}
+                        >
+                          Download DOCX
+                        </button>
+                        <button
+                          type="button"
+                          className="executive-primary-button"
+                          onClick={() => void downloadClaudeResumeFile("pdf")}
+                        >
+                          Download PDF
+                        </button>
+                      </div>
+                    </div>
+                    <pre className="resume-preview mt-6 min-h-[420px]">
+                      {session.claude_resume.markdown}
+                    </pre>
+                  </section>
+                ) : null}
+
                 {session?.review_result ? (
                   <section className="executive-panel executive-panel-stage executive-panel-final p-6 md:p-8">
                     <p className="executive-kicker">Final Pass</p>
                     <h3 className="mt-2 text-2xl">Apply Final Changes</h3>
                     <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_1fr]">
-                      <pre className="executive-code-block">{session.review_result.markdown}</pre>
+                      <pre className="resume-preview">{session.review_result.markdown}</pre>
                       <form className="space-y-3" onSubmit={finalizeResume}>
                         <label className="block">
                           <span className="block text-lg text-pine">Ask for any final changes</span>
@@ -1726,7 +1950,7 @@ export default function Home() {
                       <p>Export PDF for submission and DOCX if you want to edit outside the app.</p>
                     </div>
                   </div>
-                  <pre className="executive-code-block min-h-[420px]">
+                  <pre className="resume-preview min-h-[420px]">
                     {resumeMarkdown || "Your final resume will appear here after the drafting step is complete."}
                   </pre>
                 </div>

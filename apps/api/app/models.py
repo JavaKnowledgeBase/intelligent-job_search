@@ -42,6 +42,7 @@ class SessionState(BaseModel):
     transcript: str = ""
     review_result: ReviewResult | None = None
     final_resume: ResumeDraft | None = None
+    claude_resume: ResumeDraft | None = None
     expires_at: datetime
 
 
