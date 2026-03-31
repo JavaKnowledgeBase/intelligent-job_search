@@ -33,10 +33,7 @@ export function BrandLogo({ compact = false, iconOnly = false }: BrandLogoProps)
         {iconOnly ? null : (
           <div className="min-w-0 leading-none">
             <p className="text-[1.18rem] font-semibold tracking-[-0.05em] text-[#2B97D5] md:text-[1.28rem]">
-              Torilaure
-            </p>
-            <p className="mt-0.5 text-[0.92rem] tracking-[-0.04em] text-[#55575A] md:text-[1rem]">
-              E-systems
+              CareerPaq
             </p>
           </div>
         )}
@@ -92,10 +89,7 @@ export function BrandLogo({ compact = false, iconOnly = false }: BrandLogoProps)
 
       <div className="min-w-0 leading-none">
         <p className="text-[2.2rem] font-semibold tracking-[-0.05em] text-[#2B97D5] md:text-[3.2rem]">
-          Torilaure
-        </p>
-        <p className="mt-1 text-[1.55rem] tracking-[-0.04em] text-[#55575A] md:text-[2.6rem]">
-          E-systems
+          CareerPaq
         </p>
       </div>
     </div>

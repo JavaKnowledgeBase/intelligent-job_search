@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Your Resume Upgrade Workspace",
-  description: "Privacy-first professional resume builder and upgrade workspace",
+  title: "CareerPaq | Resume Builder",
+  description: "Build a professional resume and find matching jobs with CareerPaq",
 };
 
 export default function RootLayout({

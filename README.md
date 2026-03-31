@@ -1,6 +1,6 @@
-# Resume Co-Pilot
+# CareerPaq – Resume Builder
 
-Privacy-first resume builder that turns a messy career brain dump into a structured resume draft through guided follow-up questions, editable extracted facts, and export options.
+Privacy-first AI resume builder that turns a messy career brain dump into a structured resume draft through guided follow-up questions, editable extracted facts, and export options. After download, users are directed to the job search service at [apply.careerpaq.com](http://apply.careerpaq.com) for tailored job matching and application support.
 
 ## Workspace
 
@@ -10,15 +10,16 @@ Privacy-first resume builder that turns a messy career brain dump into a structu
 ## MVP Flow
 
 1. Create a temporary session.
-2. Paste a brain dump.
+2. Paste a brain dump, upload a file, or use voice dictation.
 3. Send the brain dump to OpenAI for fact extraction.
 4. Send the transcript context to OpenAI for follow-up questions.
 5. Review and edit extracted facts if needed.
-6. Build a resume draft.
+6. Build a resume draft (OpenAI or Claude specialist).
 7. Send transcript plus draft to OpenAI for review.
 8. Show the reviewed output to the user.
 9. Apply requested final changes.
 10. Export the output as Markdown, JSON, DOCX, or PDF.
+11. Cross-promote the job search service via the green banner.
 
 ## Local Development
 
@@ -45,28 +46,22 @@ From `apps/api`:
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-The backend default local URL for this project is `http://localhost:8001`. You can start it with:
-
-```bash
 uvicorn app.main:app --reload --port 8001
 ```
 
 ### OpenAI Configuration
 
-Set these environment variables before starting the backend if you want real review and finalization:
+Set these environment variables before starting the backend:
 
 ```bash
 OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-5-mini
+OPENAI_MODEL=gpt-4o-mini
+ANTHROPIC_API_KEY=your_key_here   # optional, enables Claude specialist
 ```
 
-Keep these values in [apps/api/.env](c:/Users/rkafl/Documents/Projects/resume-intellegence/apps/api/.env) locally. That file is git-ignored already.
+Keep these values in `apps/api/.env` locally. That file is git-ignored.
 
-If `OPENAI_API_KEY` is not set, the backend falls back to local mock review behavior.
-If `OPENAI_API_KEY` is set, extraction, question generation, review, and final revisions all use OpenAI.
+If `OPENAI_API_KEY` is not set, the backend falls back to local mock behavior so the UI flow still works.
 
 ## Current Features
 
@@ -74,8 +69,21 @@ If `OPENAI_API_KEY` is set, extraction, question generation, review, and final r
 - editable extracted facts before draft generation
 - guided follow-up questions
 - OpenAI-backed or local-fallback draft generation
+- Claude (Anthropic) specialist resume generation
 - transcript download
 - resume export to Markdown, JSON, DOCX, and PDF
+- job search cross-promotion banner (welcome screen + workspace sidebar)
+
+## Environment Variables
+
+| Variable | Purpose | Local default |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | Backend API URL | `http://localhost:8001` |
+| `NEXT_PUBLIC_JOB_SEARCH_URL` | Job search service URL | `http://localhost:7860` |
+
+In production (`docker-compose.prod.yml`):
+- `NEXT_PUBLIC_API_BASE_URL` → `/api`
+- `NEXT_PUBLIC_JOB_SEARCH_URL` → `http://apply.careerpaq.com`
 
 ## User Walkthrough
 
@@ -134,11 +142,13 @@ After the draft or final version is ready, the user can download:
 - resume as DOCX
 - resume as PDF
 
-This makes the app useful both for direct resume editing and for passing structured output into later tools or workflows.
+### Job Search
+
+After downloading the resume, a green cross-promotion banner invites the user to try the job search service at [apply.careerpaq.com](http://apply.careerpaq.com) for tailored job matching and application material support.
 
 ## Docker
 
-Create [apps/api/.env](c:/Users/rkafl/Documents/Projects/resume-intellegence/apps/api/.env) first, then from the repo root run:
+Create `apps/api/.env` first, then from the repo root run:
 
 ```bash
 docker compose up --build
@@ -148,3 +158,9 @@ Docker port mappings:
 
 - Frontend: `http://localhost:3001`
 - Backend: `http://localhost:8001`
+
+## Production (EC2)
+
+```bash
+docker compose -f docker-compose.prod.yml up --build -d
+```

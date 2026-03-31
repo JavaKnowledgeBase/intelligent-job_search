@@ -1242,8 +1242,10 @@ export default function Home() {
 
               {/* Header */}
               <div className="shrink-0 border-b border-[var(--executive-line)] pb-5">
-                <BrandLogo compact />
-                <p className="mt-4 text-xs uppercase tracking-[0.3em] text-[var(--executive-mute)]">Resume Upgrade Workspace</p>
+                <div className="flex items-center gap-3">
+                  <BrandLogo compact />
+                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--executive-mute)]">Resume Upgrade Workspace</p>
+                </div>
               </div>
 
               {/* Specialist Cards */}
@@ -1338,6 +1340,21 @@ export default function Home() {
                 >
                   Download Source Transcript
                 </button>
+              </div>
+
+              {/* Job search promo */}
+              <div className="mt-3 shrink-0 flex items-center justify-between gap-2 rounded-[1.1rem] border border-[rgba(15,118,110,0.18)] bg-[rgba(215,243,238,0.7)] px-3 py-2.5">
+                <p className="text-[0.75rem] leading-[1.4] text-[#0f5c54]">
+                  We can support tailored job search and application materials for greater success. Try after download?
+                </p>
+                <a
+                  href={process.env.NEXT_PUBLIC_JOB_SEARCH_URL ?? "http://localhost:7860"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 rounded-lg bg-[#0f766e] px-3 py-1.5 text-[0.72rem] font-semibold text-white hover:bg-[#115e59] transition-colors"
+                >
+                  Yes
+                </a>
               </div>
 
               {/* Transcript */}

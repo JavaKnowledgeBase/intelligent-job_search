@@ -15,6 +15,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: /api
+        NEXT_PUBLIC_JOB_SEARCH_URL: http://apply.careerpaq.com
     depends_on:
       - api
     restart: unless-stopped

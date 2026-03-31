@@ -51,8 +51,6 @@ export function WelcomeOverlay({
     return null;
   }
 
-  const hasAnyInput = brainDump.trim().length > 60 || lastVoiceTranscript.trim().length > 20 || Boolean(uploadedFileName);
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(9,19,32,0.62)] px-4 py-4 backdrop-blur-md">
       <div className="welcome-panel relative flex h-[calc(100vh-1rem)] w-full max-w-[1300px] flex-col overflow-hidden rounded-[2rem] border border-white/40 bg-[linear-gradient(145deg,rgba(248,250,252,0.99),rgba(237,243,247,0.97))] shadow-[0_48px_130px_rgba(9,19,32,0.28)]">
@@ -167,8 +165,8 @@ export function WelcomeOverlay({
             <section className="welcome-dashboard-panel flex h-full min-h-0 flex-col overflow-hidden p-4">
               <div className="flex shrink-0 items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[0.72rem] uppercase tracking-[0.22em] text-pine/70">Step 1 of 5</p>
-                  <h2 className="welcome-display text-[1.35rem] leading-[0.96] text-ink md:text-[1.65rem]">
+                  <p className="text-[0.82rem] leading-5 text-emerald-700 font-medium">✓ You have added career material. Click &ldquo;Build My Resume&rdquo; when you are ready.</p>
+                  <h2 className="welcome-display mt-1 text-[1.35rem] leading-[0.96] text-ink md:text-[1.65rem]">
                     Add your career material below.
                   </h2>
                   <p className="mt-1 text-[0.84rem] leading-5 text-[var(--executive-mute)]">
@@ -202,7 +200,7 @@ export function WelcomeOverlay({
                 {/* Voice transcript */}
                 <div
                   className="welcome-input-shell min-h-[9rem] xl:min-h-0"
-                  style={{ flexBasis: "46%", flexGrow: 0, flexShrink: 0 }}
+                  style={{ flex: "1 1 0" }}
                 >
                   <div className="welcome-input-toolbar">
                     <p className="welcome-section-label text-[0.78rem] uppercase tracking-[0.2em]">
@@ -225,7 +223,7 @@ export function WelcomeOverlay({
                 {/* Type / paste */}
                 <div
                   className="welcome-input-shell min-h-[9rem] xl:min-h-0"
-                  style={{ flexBasis: "42%", flexGrow: 0, flexShrink: 0 }}
+                  style={{ flex: "1 1 0" }}
                 >
                   <div className="welcome-input-toolbar">
                     <p className="welcome-section-label text-[0.78rem] uppercase tracking-[0.2em]">
@@ -245,11 +243,19 @@ export function WelcomeOverlay({
                   />
                 </div>
 
-                {/* Privacy / readiness note */}
-                <div className="welcome-status-card shrink-0" style={{ flexBasis: "auto" }}>
-                  {hasAnyInput
-                    ? "✓ You have added career material. Click \"Build My Resume\" when you are ready."
-                    : "Everything you share is used only to build your resume and is never stored after your session ends."}
+                {/* Job search promo */}
+                <div className="shrink-0 flex items-center justify-between gap-3 rounded-[1.1rem] border border-[rgba(15,118,110,0.18)] bg-[rgba(215,243,238,0.7)] px-4 py-3" style={{ flexBasis: "auto" }}>
+                  <p className="text-[0.8rem] leading-5 text-[#0f5c54]">
+                    We can support tailored job search and application support materials for greater success. Do you want to try?
+                  </p>
+                  <a
+                    href={process.env.NEXT_PUBLIC_JOB_SEARCH_URL ?? "http://localhost:7860"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 rounded-lg bg-[#0f766e] px-3 py-1.5 text-[0.75rem] font-semibold text-white hover:bg-[#115e59] transition-colors"
+                  >
+                    Yes
+                  </a>
                 </div>
 
               </div>
