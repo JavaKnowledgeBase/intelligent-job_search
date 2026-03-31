@@ -78,7 +78,7 @@ If `OPENAI_API_KEY` is not set, the backend falls back to local mock behavior so
 
 | Variable | Purpose | Local default |
 |---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | Backend API URL | `http://localhost:8001` |
+| `NEXT_PUBLIC_API_BASE_URL` | Backend API URL | `http://localhost:8002` |
 | `NEXT_PUBLIC_JOB_SEARCH_URL` | Job search service URL | `http://localhost:7860` |
 
 In production (`docker-compose.prod.yml`):
@@ -157,7 +157,7 @@ docker compose up --build
 Docker port mappings:
 
 - Frontend: `http://localhost:3001`
-- Backend: `http://localhost:8001`
+- Backend: `http://localhost:8002`
 
 ## Production (EC2)
 
